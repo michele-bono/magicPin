@@ -80,3 +80,26 @@ describe("computeDiff matching", () => {
     expect(diff.upload).toEqual([{ tabId: 8, url: "https://unknown.test/", title: "t" }]);
   });
 });
+
+describe("computeDiff three-way deletions", () => {
+  it("closes local tabs whose pin was deleted on another device", () => {
+    const snapshot = { pins: { a: pin("https://a.test/") }, order: ["a"] };
+    const diff = computeDiff({
+      remote: empty,
+      localTabs: [tab(7, "https://a.test/")],
+      snapshot,
+      tabMap: { 7: "a" },
+    });
+    expect(diff.close).toEqual([7]);
+    expect(diff.upload).toEqual([]);
+  });
+
+  it("uploads pins created while offline instead of closing them", () => {
+    const snapshot = { pins: { a: pin("https://a.test/") }, order: ["a"] };
+    const remote = { pins: { a: pin("https://a.test/") }, order: ["a"] };
+    const localTabs = [tab(7, "https://a.test/"), tab(8, "https://new.test/")];
+    const diff = computeDiff({ remote, localTabs, snapshot, tabMap: { 7: "a" } });
+    expect(diff.close).toEqual([]);
+    expect(diff.upload).toEqual([{ tabId: 8, url: "https://new.test/", title: "t" }]);
+  });
+});

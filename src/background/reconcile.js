@@ -2,6 +2,7 @@
 
 export function computeDiff({ remote, localTabs, snapshot, tabMap }) {
   const remotePins = remote.pins ?? {};
+  const snapshotPins = snapshot.pins ?? {};
   const map = {};
   const matched = new Set();
   const unmatched = [];
@@ -31,11 +32,18 @@ export function computeDiff({ remote, localTabs, snapshot, tabMap }) {
     }
   }
 
-  // Deletion detection (close) is driven by the last-applied snapshot; see next task.
+  // Three-way deletion detection: distinguish remote deletions from offline-created pins.
   const close = [];
   const upload = [];
   for (const tab of leftover) {
-    upload.push({ tabId: tab.tabId, url: tab.url, title: tab.title });
+    const pinId = tabMap[tab.tabId];
+    if (pinId && snapshotPins[pinId] && !remotePins[pinId]) {
+      // It synced before and another device deleted it: mirror the deletion.
+      close.push(tab.tabId);
+    } else {
+      // Never synced (or mapping is stale): treat as locally new.
+      upload.push({ tabId: tab.tabId, url: tab.url, title: tab.title });
+    }
   }
 
   const create = Object.entries(remotePins)
