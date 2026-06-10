@@ -84,6 +84,7 @@ const reconcile = serialize(async () => {
         remove: dupIds,
         order: remote.order.filter((id) => !dupIds.includes(id)),
       });
+      await store.writeLastSync(Date.now());
       remote = await store.readRemote();
     }
 
@@ -182,10 +183,10 @@ const schedulePushOrder = debounce(pushOrder, 1500);
 const navigatedPins = new Set();
 
 const flushNav = serialize(async () => {
+  if (await store.readPaused().catch(() => false)) return;
   const navigatedPinIds = [...navigatedPins];
   navigatedPins.clear();
   try {
-    if (await store.readPaused()) return;
     const tabMap = await store.readTabMap();
     const remote = await store.readRemote();
     const set = navUpdates({
@@ -202,8 +203,9 @@ const flushNav = serialize(async () => {
     await store.writeSnapshot(snapshot);
     await store.writeLastSync(Date.now());
   } catch (e) {
-    // Re-queue so the urls retry on the next flush instead of going stale.
+    // Re-queue and re-arm so the urls retry instead of going stale.
     for (const id of navigatedPinIds) navigatedPins.add(id);
+    scheduleNavFlush();
     console.error("magicPin: failed to sync navigation", e);
     await setErrorBadge();
   }
@@ -217,7 +219,9 @@ browser.tabs.onUpdated.addListener(
   (tabId, changeInfo, tab) => {
     if (isEcho(tabId) || tab.incognito) return;
     if (changeInfo.pinned === true) scheduleReconcile(); // new local pin -> upload
-    if (changeInfo.pinned === false) handleLocalPinGone(tabId);
+    if (changeInfo.pinned === false) {
+      handleLocalPinGone(tabId).catch((e) => console.error("magicPin:", e));
+    }
     if (changeInfo.url && tab.pinned) {
       store
         .readTabMap()
@@ -236,7 +240,7 @@ browser.tabs.onUpdated.addListener(
 browser.tabs.onRemoved.addListener((tabId, removeInfo) => {
   // A closing window (or browser shutdown) is NOT a user unpin.
   if (isEcho(tabId) || removeInfo.isWindowClosing) return;
-  handleLocalPinGone(tabId);
+  handleLocalPinGone(tabId).catch((e) => console.error("magicPin:", e));
 });
 
 browser.tabs.onMoved.addListener((tabId) => {
