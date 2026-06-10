@@ -1,0 +1,27 @@
+{
+  "name": "magicpin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "lint": "web-ext lint",
+    "start": "web-ext run"
+  },
+  "devDependencies": {
+    "vitest": "^3.0.0",
+    "web-ext": "^8.0.0"
+  },
+  "webExt": {
+    "sourceDir": ".",
+    "ignoreFiles": [
+      "node_modules",
+      "tests",
+      "docs",
+      "package.json",
+      "package-lock.json",
+      ".gitignore",
+      "README.md"
+    ]
+  }
+}
