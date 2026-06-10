@@ -1,5 +1,9 @@
 # magicPin
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-2b2a33)](LICENSE)
+[![Firefox 115+](https://img.shields.io/badge/Firefox-115%2B-ff5c4d)](https://www.mozilla.org/firefox/)
+[![Tests](https://img.shields.io/badge/tests-34%20passing-2da44e)](tests/)
+
 Firefox extension that keeps a saved copy of **each device's pinned tabs** in
 your Firefox Account, and lets you replace this device's pinned tabs with any
 other device's set in one click.
@@ -118,3 +122,8 @@ waiting for the schedule. Then verify:
 8. **Merge and +:** in B, Merge from A's row → only A's missing pins are
    added, nothing closes; click + on a single pin → just that pin appears
    (in its container if it had one).
+
+## License
+
+[MIT](LICENSE) © Michele Bono. The bundled [Bricolage Grotesque](https://github.com/ateliertriay/bricolage)
+font is licensed under the [SIL OFL 1.1](src/popup/fonts/OFL.txt).
