@@ -61,8 +61,8 @@ async function exportNow({ force = false } = {}) {
   try {
     if (!force && (await store.readPaused())) return;
     await store.ensureSchema();
-    const { deviceId, deviceName } = await store.getDeviceIdentity();
     const pins = serializePins(await getLocalPinnedTabs());
+    const { deviceId, deviceName } = await store.getDeviceIdentity(pins);
     const current = (await store.readDevices())[deviceId];
     // Identity-sequence comparison: title-only churn doesn't burn sync quota.
     if (current && current.name === deviceName && pinsEqual(current.pins, pins)) return;

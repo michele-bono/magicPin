@@ -5,13 +5,13 @@
   "author": "Michele Bono",
   "license": "MIT",
   "private": true,
-  "homepage": "https://github.com/michele-bono/magicpin#readme",
+  "homepage": "https://github.com/michele-bono/magicPin#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/michele-bono/magicpin.git"
+    "url": "git+https://github.com/michele-bono/magicPin.git"
   },
   "bugs": {
-    "url": "https://github.com/michele-bono/magicpin/issues"
+    "url": "https://github.com/michele-bono/magicPin/issues"
   },
   "keywords": [
     "firefox",

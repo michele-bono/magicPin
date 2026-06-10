@@ -98,3 +98,28 @@ describe("snapshots and undo", () => {
     expect(globalThis.browser.storage.local._data.undo).toBeDefined();
   });
 });
+
+describe("identity adoption after storage.local loss", () => {
+  const pins = [{ url: "https://a.test/", title: "A" }];
+
+  it("re-adopts the unique record matching the live pins", async () => {
+    await store.writeDevice("old-id", { name: "My Laptop", updatedAt: 1, pins });
+    const identity = await store.getDeviceIdentity(pins);
+    expect(identity).toEqual({ deviceId: "old-id", deviceName: "My Laptop" });
+    // and it sticks
+    expect(await store.getDeviceIdentity()).toEqual(identity);
+  });
+
+  it("mints a fresh identity when zero or multiple records match", async () => {
+    await store.writeDevice("d1", { name: "A", updatedAt: 1, pins });
+    await store.writeDevice("d2", { name: "B", updatedAt: 1, pins });
+    const identity = await store.getDeviceIdentity(pins);
+    expect(["d1", "d2"]).not.toContain(identity.deviceId);
+  });
+
+  it("never adopts on an empty pin set", async () => {
+    await store.writeDevice("d1", { name: "A", updatedAt: 1, pins: [] });
+    const identity = await store.getDeviceIdentity([]);
+    expect(identity.deviceId).not.toBe("d1");
+  });
+});
