@@ -1,7 +1,7 @@
 # magicPin
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-2b2a33)](LICENSE)
-[![Firefox 115+](https://img.shields.io/badge/Firefox-115%2B-ff5c4d)](https://www.mozilla.org/firefox/)
+[![Firefox 140+](https://img.shields.io/badge/Firefox-140%2B-ff5c4d)](https://www.mozilla.org/firefox/)
 [![Tests](https://img.shields.io/badge/tests-34%20passing-2da44e)](tests/)
 
 Firefox extension that keeps a saved copy of **each device's pinned tabs** in
@@ -14,7 +14,7 @@ minutes; immediately on browser startup/focus in practice).
 
 ## Requirements
 
-- Firefox 115+ on every device
+- Firefox 140+ on every device
 - Signed into the same Firefox Account with Sync enabled (and "Add-ons"
   syncing on, so the extension itself can be installed everywhere)
 - magicPin installed on every device
