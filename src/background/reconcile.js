@@ -55,3 +55,27 @@ export function computeDiff({ remote, localTabs, snapshot, tabMap }) {
 
   return { create, close, upload, map, order };
 }
+
+// Global pin order from local tabs: by window, then left-to-right tab index.
+export function computeLocalOrder(localTabs, tabMap) {
+  return [...localTabs]
+    .sort((a, b) => a.windowId - b.windowId || a.index - b.index)
+    .map((t) => tabMap[t.tabId])
+    .filter(Boolean);
+}
+
+// Merge-on-write: build url updates ONLY for pins this device navigated,
+// so a stale device never clobbers another device's fresher urls.
+export function navUpdates({ navigatedPinIds, tabMap, localTabs, remotePins, now }) {
+  const pinToTab = {};
+  for (const [tabId, pinId] of Object.entries(tabMap)) pinToTab[pinId] = Number(tabId);
+  const tabsById = new Map(localTabs.map((t) => [t.tabId, t]));
+  const set = {};
+  for (const pinId of navigatedPinIds) {
+    const tab = tabsById.get(pinToTab[pinId]);
+    const existing = remotePins[pinId];
+    if (!tab || !existing || existing.url === tab.url) continue;
+    set[pinId] = { url: tab.url, title: tab.title, updatedAt: now };
+  }
+  return set;
+}

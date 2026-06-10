@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeDiff } from "../src/background/reconcile.js";
+import { computeDiff, computeLocalOrder, navUpdates } from "../src/background/reconcile.js";
 
 export const pin = (url, title = "t") => ({ url, title, updatedAt: 1 });
 export const tab = (tabId, url, { index = 0, windowId = 1, title = "t" } = {}) => ({
@@ -128,5 +128,48 @@ describe("computeDiff three-way deletions", () => {
     });
     expect(diff.close).toEqual([]);
     expect(diff.upload).toEqual([{ tabId: 7, url: "https://a.test/", title: "t" }]);
+  });
+});
+
+describe("computeLocalOrder", () => {
+  it("sorts by window then index, skipping unmapped tabs", () => {
+    const tabs = [
+      tab(1, "https://a.test/", { windowId: 2, index: 0 }),
+      tab(2, "https://b.test/", { windowId: 1, index: 1 }),
+      tab(3, "https://c.test/", { windowId: 1, index: 0 }),
+      tab(4, "https://d.test/", { windowId: 1, index: 2 }),
+    ];
+    const order = computeLocalOrder(tabs, { 1: "pa", 2: "pb", 3: "pc" });
+    expect(order).toEqual(["pc", "pb", "pa"]);
+  });
+});
+
+describe("navUpdates (merge-on-write)", () => {
+  it("updates urls only for pins this device navigated", () => {
+    const remotePins = { a: pin("https://a.test/old"), b: pin("https://b.test/old") };
+    const localTabs = [
+      tab(1, "https://a.test/new", { title: "A" }),
+      tab(2, "https://b.test/new"),
+    ];
+    const set = navUpdates({
+      navigatedPinIds: ["a"],
+      tabMap: { 1: "a", 2: "b" },
+      localTabs,
+      remotePins,
+      now: 99,
+    });
+    expect(set).toEqual({ a: { url: "https://a.test/new", title: "A", updatedAt: 99 } });
+  });
+
+  it("skips navigated pins whose tab is gone or url unchanged", () => {
+    const remotePins = { a: pin("https://a.test/") };
+    const set = navUpdates({
+      navigatedPinIds: ["a", "ghost"],
+      tabMap: { 1: "a" },
+      localTabs: [tab(1, "https://a.test/")],
+      remotePins,
+      now: 99,
+    });
+    expect(set).toEqual({});
   });
 });
