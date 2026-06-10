@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "magicPin",
+  "version": "0.1.0",
+  "description": "Sync pinned tabs across devices signed into the same Firefox Account.",
+  "permissions": ["tabs", "storage"],
+  "background": {
+    "scripts": ["src/background/main.js"],
+    "type": "module"
+  },
+  "action": {
+    "default_title": "magicPin"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "magicpin@voixstream.net",
+      "strict_min_version": "115.0"
+    }
+  }
+}
