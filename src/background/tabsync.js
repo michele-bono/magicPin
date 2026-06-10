@@ -31,7 +31,9 @@ export async function applyDiff(diff) {
 
   if (diff.create.length) {
     const windowId = await getTargetWindowId();
-    if (windowId !== null) {
+    if (windowId === null) {
+      console.warn("magicPin: no normal window available; skipping", diff.create.length, "create(s)");
+    } else {
       for (const { pinId, url, title } of diff.create) {
         try {
           const tab = await createPinnedTab(windowId, url, title);
@@ -55,7 +57,8 @@ async function createPinnedTab(windowId, url, title) {
     // discarded:true = lazy tab; N incoming pins don't trigger N page loads.
     return await browser.tabs.create({ ...base, discarded: true, title });
   } catch {
-    // Some URLs can't be created discarded; fall back to a normal load.
+    // Intended for URLs that can't be created discarded, but any create error
+    // lands here; the fallback then loads the tab eagerly.
     return await browser.tabs.create(base);
   }
 }
@@ -86,6 +89,9 @@ async function applyOrder(order, map) {
 
   for (const [windowId, tabIds] of perWindow) {
     for (let i = 0; i < tabIds.length; i++) {
+      // markEcho BEFORE the call: our own onMoved event may dispatch before the
+      // promise continuation runs. If the move fails, the stray 3s mark can at
+      // worst suppress one user reorder, which the next reconcile repairs.
       markEcho(tabIds[i]);
       try {
         await browser.tabs.move(tabIds[i], { windowId, index: i });

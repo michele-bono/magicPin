@@ -14,4 +14,15 @@ describe("echo suppression", () => {
     vi.advanceTimersByTime(3000);
     expect(isEcho(42)).toBe(false);
   });
+
+  it("resets the expiry window on repeated calls", () => {
+    vi.useFakeTimers();
+    markEcho(42);
+    vi.advanceTimersByTime(2900);
+    markEcho(42); // reset
+    vi.advanceTimersByTime(2900);
+    expect(isEcho(42)).toBe(true); // not yet expired
+    vi.advanceTimersByTime(100);
+    expect(isEcho(42)).toBe(false);
+  });
 });
