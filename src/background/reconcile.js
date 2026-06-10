@@ -3,6 +3,7 @@
 export function computeDiff({ remote, localTabs, snapshot, tabMap }) {
   const remotePins = remote.pins ?? {};
   const snapshotPins = snapshot.pins ?? {};
+  tabMap = tabMap ?? {};
   const map = {};
   const matched = new Set();
   const unmatched = [];
@@ -41,7 +42,7 @@ export function computeDiff({ remote, localTabs, snapshot, tabMap }) {
       // It synced before and another device deleted it: mirror the deletion.
       close.push(tab.tabId);
     } else {
-      // Never synced (or mapping is stale): treat as locally new.
+      // No mapping, or pin not in snapshot (never synced / stale mapping): upload as new.
       upload.push({ tabId: tab.tabId, url: tab.url, title: tab.title });
     }
   }

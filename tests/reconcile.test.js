@@ -98,8 +98,35 @@ describe("computeDiff three-way deletions", () => {
     const snapshot = { pins: { a: pin("https://a.test/") }, order: ["a"] };
     const remote = { pins: { a: pin("https://a.test/") }, order: ["a"] };
     const localTabs = [tab(7, "https://a.test/"), tab(8, "https://new.test/")];
-    const diff = computeDiff({ remote, localTabs, snapshot, tabMap: { 7: "a" } });
+    const diff = computeDiff({
+      remote,
+      localTabs,
+      snapshot,
+      tabMap: { 7: "a", 8: "offline-new-id" },
+    });
     expect(diff.close).toEqual([]);
     expect(diff.upload).toEqual([{ tabId: 8, url: "https://new.test/", title: "t" }]);
+  });
+
+  it("uploads tabs with stale mappings absent from both snapshot and remote", () => {
+    const diff = computeDiff({
+      remote: empty,
+      localTabs: [tab(7, "https://a.test/")],
+      snapshot: empty,
+      tabMap: { 7: "ghost" },
+    });
+    expect(diff.close).toEqual([]);
+    expect(diff.upload).toEqual([{ tabId: 7, url: "https://a.test/", title: "t" }]);
+  });
+
+  it("tolerates a missing tabMap", () => {
+    const diff = computeDiff({
+      remote: empty,
+      localTabs: [tab(7, "https://a.test/")],
+      snapshot: empty,
+      tabMap: undefined,
+    });
+    expect(diff.close).toEqual([]);
+    expect(diff.upload).toEqual([{ tabId: 7, url: "https://a.test/", title: "t" }]);
   });
 });
