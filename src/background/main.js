@@ -1,12 +1,5 @@
-import {
-  computeDiff,
-  computeLocalOrder,
-  navUpdates,
-  dedupeRemotePins,
-  containerField,
-  carrySnapshot,
-} from "./reconcile.js";
-import { applyDiff, isEcho } from "./tabsync.js";
+import { serializePins, pinsEqual, planReplace } from "./pins.js";
+import { applyReplace, isEcho } from "./tabsync.js";
 import * as store from "./store.js";
 import { debounce } from "./util.js";
 
@@ -35,9 +28,8 @@ async function clearErrorBadge() {
   await browser.action.setBadgeText({ text: "" });
 }
 
-// All storage-mutating work runs on one promise chain, so reconcile and the
-// local-change handlers never interleave their read-modify-writes of
-// tabMap/snapshot/order.
+// All storage-mutating work runs on one promise chain, so the export and
+// replace paths never interleave.
 let chain = Promise.resolve();
 function serialize(fn) {
   return (...args) => {
@@ -47,273 +39,111 @@ function serialize(fn) {
   };
 }
 
-// ---------- restart-proof tab identity ----------
-// storage.session is cleared when the browser quits, but session-restored tabs
-// keep their sessions API values. Persisting tabId -> pinId there lets a
-// restored pinned tab that navigated before its nav flush keep its identity
-// instead of being re-uploaded as a duplicate.
+// ---------- export: save THIS device's pinned tabs to its own record ----------
+// One writer per device record means no cross-device merging, ever. Nothing
+// in this extension mutates tabs except the explicit replace below.
 
-async function persistAssociations(map) {
-  await Promise.all(
-    Object.entries(map).map(([tabId, pinId]) =>
-      browser.sessions.setTabValue(Number(tabId), "pinId", pinId).catch(() => {})
-    )
-  );
-}
-
-async function adoptPersistedAssociations(localTabs, tabMap, remotePins) {
-  const mapped = new Set(Object.values(tabMap));
-  for (const tab of localTabs) {
-    if (tabMap[tab.tabId]) continue;
-    const pinId = await browser.sessions
-      .getTabValue(tab.tabId, "pinId")
-      .catch(() => undefined);
-    if (pinId && remotePins[pinId] && !mapped.has(pinId)) {
-      tabMap[tab.tabId] = pinId;
-      mapped.add(pinId);
-    }
-  }
-}
-
-// ---------- reconcile ----------
-// Two modes share one body. The AUTO mode (every sync/focus/startup trigger)
-// only pushes local state up: it uploads new local pins and refreshes the
-// mappings, but never creates, closes, or moves a tab. The APPLY mode runs
-// only from the popup's "Replace pinned tabs" button and makes local pinned
-// tabs match the synced set exactly (create + close + reorder).
-
-const runReconcile = async ({ apply }) => {
+async function exportNow() {
   try {
     if (await store.readPaused()) return;
     await store.ensureSchema();
-
-    let remote = await store.readRemote();
-
-    // Converge concurrent first-run uploads: identical (url, container) pins
-    // collapse to the same survivor on every device.
-    const dupIds = dedupeRemotePins(remote.pins);
-    if (dupIds.length) {
-      await store.writePins({
-        remove: dupIds,
-        order: remote.order.filter((id) => !dupIds.includes(id)),
-      });
-      await store.writeLastSync(Date.now());
-      remote = await store.readRemote();
-    }
-
-    const snapshot = await store.readSnapshot();
-    const tabMap = await store.readTabMap();
-    const localTabs = await getLocalPinnedTabs();
-    await adoptPersistedAssociations(localTabs, tabMap, remote.pins);
-
-    const diff = computeDiff({ remote, localTabs, snapshot, tabMap });
-    let map = { ...diff.map };
-    if (apply) {
-      map = await applyDiff(diff);
-    } else {
-      // Keep mappings for pending-removal tabs (pin deleted remotely, tab
-      // still open here): losing them would make the next pass re-upload the
-      // tab and resurrect the deletion.
-      for (const tabId of diff.close) {
-        if (tabMap[tabId]) map[tabId] = tabMap[tabId];
-      }
-    }
-
-    // Upload locally-new pins (first run, offline-created, fresh pin events).
-    // A pin-then-quick-unpin inside the debounce window may still upload and
-    // be re-created once; sub-second window, recoverable by closing the tab.
-    const uploaded = {};
-    const order = [...diff.order];
-    if (diff.upload.length) {
-      for (const u of diff.upload) {
-        const id = crypto.randomUUID();
-        uploaded[id] = {
-          url: u.url,
-          title: u.title,
-          updatedAt: Date.now(),
-          ...containerField(u),
-        };
-        order.push(id);
-        map[u.tabId] = id;
-      }
-      if (Object.values(uploaded).some((p) => p.cookieStoreId)) {
-        await store.ensureContainerSchema();
-      }
-      await store.writePins({ set: uploaded, order });
-      await store.writeLastSync(Date.now());
-    }
-
-    // Drop map entries for tabs that no longer exist (incl. ones apply closed).
-    const live = new Set((await getLocalPinnedTabs()).map((t) => t.tabId));
-    map = Object.fromEntries(
-      Object.entries(map).filter(([tabId]) => live.has(Number(tabId)))
-    );
-
-    await store.writeTabMap(map);
-    await persistAssociations(map);
-    if (apply) {
-      // Everything was applied: the snapshot IS the synced state.
-      await store.writeSnapshot({ pins: { ...remote.pins, ...uploaded }, order });
-    } else {
-      // Acknowledge uploads, keep pending removals alive until the user applies.
-      await store.writeSnapshot(carrySnapshot({ snapshot, remote, uploaded, tabMap: map }));
-    }
+    const { deviceId, deviceName } = await store.getDeviceIdentity();
+    const pins = serializePins(await getLocalPinnedTabs());
+    const current = (await store.readDevices())[deviceId];
+    // Identity-sequence comparison: title-only churn doesn't burn sync quota.
+    if (current && current.name === deviceName && pinsEqual(current.pins, pins)) return;
+    await store.writeDevice(deviceId, { name: deviceName, updatedAt: Date.now(), pins });
+    await store.writeLastSync(Date.now());
     await clearErrorBadge();
   } catch (e) {
-    console.error("magicPin: reconcile failed", e);
+    console.error("magicPin: export failed", e);
     await setErrorBadge();
   }
-};
+}
 
-const reconcile = serialize(() => runReconcile({ apply: false }));
-const applySyncedPins = serialize(() => runReconcile({ apply: true }));
+const exportPins = serialize(exportNow);
+const scheduleExport = debounce(exportPins, 2000);
+// Navigation inside pinned app tabs is frequent; give it a longer window.
+const scheduleNavExport = debounce(exportPins, 10000);
 
-const scheduleReconcile = debounce(reconcile, 500);
+// ---------- replace: make local pinned tabs match a chosen device's set ----------
 
-// ---------- local -> remote: deletions ----------
-
-const handleLocalPinGone = serialize(async (tabId) => {
+const replaceWith = serialize(async (sourceDeviceId) => {
   try {
-    if (await store.readPaused()) return;
-    const tabMap = await store.readTabMap();
-    const pinId = tabMap[tabId];
-    if (!pinId) return;
-    delete tabMap[tabId];
-    await store.writeTabMap(tabMap);
-    const remote = await store.readRemote();
-    await store.writePins({
-      remove: [pinId],
-      order: remote.order.filter((id) => id !== pinId),
-    });
-    const snapshot = await store.readSnapshot();
-    delete snapshot.pins[pinId];
-    snapshot.order = snapshot.order.filter((id) => id !== pinId);
-    await store.writeSnapshot(snapshot);
-    await store.writeLastSync(Date.now());
+    await store.ensureSchema();
+    const source = (await store.readDevices())[sourceDeviceId];
+    if (!source) throw new Error(`unknown device ${sourceDeviceId}`);
+    const plan = planReplace(await getLocalPinnedTabs(), source.pins);
+    await applyReplace(plan);
+    await clearErrorBadge();
   } catch (e) {
-    console.error("magicPin: failed to sync pin removal", e);
+    console.error("magicPin: replace failed", e);
+    await setErrorBadge();
+  }
+  // The adopted set is now this device's current set; save it right away.
+  await exportNow();
+});
+
+// ---------- device management ----------
+
+const renameDevice = serialize(async (name) => {
+  try {
+    const trimmed = String(name ?? "").trim();
+    if (!trimmed) return;
+    await store.setDeviceName(trimmed);
+    await exportNow();
+  } catch (e) {
+    console.error("magicPin: rename failed", e);
     await setErrorBadge();
   }
 });
 
-// ---------- local -> remote: order ----------
-
-const pushOrder = serialize(async () => {
+const forgetDevice = serialize(async (deviceId) => {
   try {
-    if (await store.readPaused()) return;
-    const tabMap = await store.readTabMap();
-    const order = computeLocalOrder(await getLocalPinnedTabs(), tabMap);
-    await store.writePins({ order });
-    const snapshot = await store.readSnapshot();
-    snapshot.order = order;
-    await store.writeSnapshot(snapshot);
-    await store.writeLastSync(Date.now());
+    const { deviceId: own } = await store.getDeviceIdentity();
+    if (deviceId === own) return; // own record is recreated by export anyway
+    await store.removeDevice(deviceId);
   } catch (e) {
-    console.error("magicPin: failed to sync order", e);
+    console.error("magicPin: forget failed", e);
     await setErrorBadge();
   }
 });
-
-const schedulePushOrder = debounce(pushOrder, 1500);
-
-// ---------- local -> remote: navigation (merge-on-write) ----------
-
-const navigatedPins = new Set();
-
-const flushNav = serialize(async () => {
-  if (await store.readPaused().catch(() => false)) return;
-  const navigatedPinIds = [...navigatedPins];
-  navigatedPins.clear();
-  try {
-    const tabMap = await store.readTabMap();
-    const remote = await store.readRemote();
-    const set = navUpdates({
-      navigatedPinIds,
-      tabMap,
-      localTabs: await getLocalPinnedTabs(),
-      remotePins: remote.pins,
-      now: Date.now(),
-    });
-    if (!Object.keys(set).length) return;
-    await store.writePins({ set });
-    const snapshot = await store.readSnapshot();
-    Object.assign(snapshot.pins, set);
-    await store.writeSnapshot(snapshot);
-    await store.writeLastSync(Date.now());
-  } catch (e) {
-    // Re-queue and re-arm so the urls retry instead of going stale.
-    for (const id of navigatedPinIds) navigatedPins.add(id);
-    scheduleNavFlush();
-    console.error("magicPin: failed to sync navigation", e);
-    await setErrorBadge();
-  }
-});
-
-const scheduleNavFlush = debounce(flushNav, 10000);
 
 // ---------- event wiring (top level, so events wake the event page) ----------
 
 browser.tabs.onUpdated.addListener(
   (tabId, changeInfo, tab) => {
     if (isEcho(tabId) || tab.incognito) return;
-    if (changeInfo.pinned === true) scheduleReconcile(); // new local pin -> upload
-    if (changeInfo.pinned === false) {
-      handleLocalPinGone(tabId).catch((e) => console.error("magicPin:", e));
-    }
-    if (changeInfo.url && tab.pinned) {
-      store
-        .readTabMap()
-        .then((tabMap) => {
-          if (tabMap[tabId]) {
-            navigatedPins.add(tabMap[tabId]);
-            scheduleNavFlush();
-          }
-        })
-        .catch((e) => console.error("magicPin: nav tracking failed", e));
-    }
+    if (changeInfo.pinned !== undefined) scheduleExport();
+    else if (changeInfo.url && tab.pinned) scheduleNavExport();
   },
   { properties: ["pinned", "url"] }
 );
 
 browser.tabs.onRemoved.addListener((tabId, removeInfo) => {
-  // A closing window (or browser shutdown) is NOT a user unpin.
+  // A closing window (or browser shutdown) is NOT an edit to the pin set.
   if (isEcho(tabId) || removeInfo.isWindowClosing) return;
-  handleLocalPinGone(tabId).catch((e) => console.error("magicPin:", e));
+  scheduleExport(); // no-ops via pinsEqual if the tab wasn't pinned
 });
 
 browser.tabs.onMoved.addListener((tabId) => {
   if (isEcho(tabId)) return;
-  store
-    .readTabMap()
-    .then((tabMap) => {
-      if (tabMap[tabId]) schedulePushOrder();
-    })
-    .catch((e) => console.error("magicPin: move tracking failed", e));
+  scheduleExport();
 });
 
 // Cross-window drags fire onAttached, not onMoved.
 browser.tabs.onAttached.addListener((tabId) => {
   if (isEcho(tabId)) return;
-  store
-    .readTabMap()
-    .then((tabMap) => {
-      if (tabMap[tabId]) schedulePushOrder();
-    })
-    .catch((e) => console.error("magicPin: attach tracking failed", e));
+  scheduleExport();
 });
 
 browser.runtime.onMessage.addListener((msg) => {
-  if (msg?.type === "unpause") scheduleReconcile();
   // Returning the promise makes the popup's sendMessage resolve on completion.
-  if (msg?.type === "apply") return applySyncedPins();
+  if (msg?.type === "sync" || msg?.type === "unpause") return exportPins();
+  if (msg?.type === "replace") return replaceWith(msg.deviceId);
+  if (msg?.type === "rename") return renameDevice(msg.name);
+  if (msg?.type === "forget") return forgetDevice(msg.deviceId);
 });
 
-browser.storage.onChanged.addListener((changes, area) => {
-  if (area === "sync") scheduleReconcile();
-});
-
-browser.runtime.onStartup.addListener(() => scheduleReconcile());
-browser.runtime.onInstalled.addListener(() => scheduleReconcile());
-browser.windows.onFocusChanged.addListener((windowId) => {
-  if (windowId !== browser.windows.WINDOW_ID_NONE) scheduleReconcile();
-});
+browser.runtime.onStartup.addListener(() => scheduleExport());
+browser.runtime.onInstalled.addListener(() => scheduleExport());

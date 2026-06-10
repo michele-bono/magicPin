@@ -1,11 +1,11 @@
 # magicPin
 
-Firefox extension that syncs your pinned tabs across every device signed
-into the same Firefox Account — pins, unpins, reorders, and navigation upload
-automatically; each device imports the synced set with one click.
+Firefox extension that keeps a saved copy of **each device's pinned tabs** in
+your Firefox Account, and lets you replace this device's pinned tabs with any
+other device's set in one click.
 
 Built on `browser.storage.sync`: no servers, no extra accounts, encrypted by
-Firefox Sync. Changes propagate on Firefox's sync schedule (typically within
+Firefox Sync. Data travels on Firefox's sync schedule (typically within
 minutes; immediately on browser startup/focus in practice).
 
 ## Requirements
@@ -17,52 +17,50 @@ minutes; immediately on browser startup/focus in practice).
 
 ## How it behaves
 
-- **Your changes upload automatically:** pinning, unpinning, closing,
-  reordering, and navigating inside pinned tabs all update the synced set in
-  the background. Nothing on your screen ever changes by itself.
-- **Importing is manual:** the toolbar popup's **"Replace pinned tabs with
-  synced set"** button makes this device's pinned tabs match the synced set
-  exactly — missing pins are created, pins removed elsewhere are closed, and
-  the order is matched. Until you click it, incoming changes only show in the
-  popup list.
-- **One global set:** pins from all your windows merge into a single synced
-  list; on apply, incoming pins open in the most recently focused window.
-- **Navigation follows you without reloading:** the stored URL tracks where
-  you browsed, so applying on another device opens the pin where you left
-  off — but pinned tabs already open are never reloaded under you.
-- **Lazy loading:** applied pins are created discarded, so ten pins don't
-  trigger ten page loads.
+- **Each device saves its own set, automatically.** Pinning, unpinning,
+  closing, reordering, and navigating inside pinned tabs update this device's
+  saved set in the background (debounced). Nothing on your screen ever
+  changes by itself.
+- **One saved version per device.** The popup lists every device with its
+  saved pins, names, and when it last saved.
+- **Replace from any device.** Each other device has a **Replace** button
+  (click twice — it closes tabs) that makes this device's pinned tabs match
+  that device's saved set: tabs that already match are kept (no reload),
+  missing pins are created lazily (discarded), everything else is closed, and
+  the order is matched. The adopted set immediately becomes this device's
+  saved set too.
 - **Containers respected:** the same URL pinned in different Firefox
-  containers is two distinct pins, and applying recreates each pin in its
-  container.
-- **Pause:** the toolbar popup has a per-device pause toggle (it also disables
-  the replace button). A red `!` badge means the last sync write failed.
+  containers is two distinct pins (marked ▣ in the popup), and Replace
+  recreates each pin in its container.
+- **Sync now** saves this device's current set immediately, skipping the
+  debounce. Note the transfer to/from the sync server itself stays on
+  Firefox's schedule — use the Firefox account menu's "Sync Now" to force
+  that part.
+- **Rename / forget:** click this device's name in the popup to rename it;
+  forget (✕) removes a stale device's saved set.
+- **Pause** stops this device from saving (per-device). A red `!` badge means
+  the last save failed.
 
 ## Known limitations
 
 - If Firefox Sync is disabled, `storage.sync` silently stays local-only —
   Firefox offers no API to detect this.
 - Privileged pins (`about:*`, `file:*`) can't be recreated by extensions and
-  are skipped on other devices.
-- Pin deletions are propagated from live unpin/close events; a deletion that
-  happens while the extension is not running is re-created rather than lost
-  (the design errs on the side of never losing a pin).
-- Two pinned tabs with the same URL **in the same container** collapse into
-  one synced pin: identical URLs are how concurrent first-run uploads from
-  different devices are deduplicated, and that rule can't tell an intentional
-  duplicate apart. The same URL in different Firefox containers is treated as
-  distinct pins and syncs fine.
-- Container pins are recreated in the same container on other devices. If a
-  (custom) container doesn't exist on a device, that pin is skipped there —
-  Firefox's four built-in containers always match across devices, but
-  user-created containers don't share IDs unless a container-sync add-on is
-  used.
+  are skipped during Replace.
+- A device's saved set must fit in one sync record (~8 KB ≈ 40+ pins
+  depending on URL length).
+- Container pins are recreated in the same container. Firefox's four built-in
+  containers match across devices; user-created containers have per-profile
+  IDs, so on another device the pin may open in whichever container has that
+  ID, or be skipped if none does.
+- Replace overwrites this device's own saved set with the adopted one (the
+  saved set always mirrors the device's current pinned tabs).
 
 ## Development
 
 ```bash
 npm install
-npm test        # vitest unit tests (pure diff/merge logic)
+npm test        # vitest unit tests (pure pin-set logic)
 npm run lint    # web-ext lint
 npm start       # web-ext run (temporary profile)
 ```
@@ -75,22 +73,18 @@ Load Temporary Add-on, or an unsigned build via `web-ext build` on
 Developer Edition). Force syncs from the account menu → "Sync now" to avoid
 waiting for the schedule. Then verify:
 
-1. **Pin propagates:** pin a tab in profile A, Sync now in both → it shows in
-   B's popup list; click **Replace pinned tabs with synced set** in B → it
-   appears pinned (lazy). B's other tabs are untouched only if they were
-   already synced.
-2. **Unpin removes on apply:** unpin it in profile B, Sync now → it leaves A's
-   popup list but A's tab stays open until A clicks Replace, which closes it.
-   It stays open unpinned in B.
-3. **Reorder:** with 3 pins, drag to reorder in A, Sync now, Replace in B →
-   same order in B.
-4. **Navigation, no reload:** navigate inside a pinned tab in A, Sync now →
-   B's already-open pinned tab does NOT reload, but B's popup shows the
-   updated URL (applying on a device without that pin opens the new URL).
-5. **Offline pin survives:** disconnect A's network, pin a new tab, reconnect,
-   Sync now → the new pin uploads and shows in B's popup; nothing gets closed.
-6. **Containers:** pin the same site in two containers in A, Sync now, Replace
-   in B → two pinned tabs in B, each in its container; neither disappears.
-7. **Pause:** pause B via popup (Replace disables), pin a tab in A, Sync now →
-   B unchanged; unpause B → B's uploads resume, importing still waits for the
-   button.
+1. **Save propagates:** pin a tab in profile A, wait ~2s, Sync now in both →
+   A's device row in B's popup shows the pin.
+2. **Replace:** in B, click Replace on A's row (twice) → B's pinned tabs
+   become A's set; tabs B already had that match are not reloaded; B's own
+   saved set now equals the adopted set.
+3. **Containers:** pin the same site in two containers in A, Sync now,
+   Replace in B → two pinned tabs in B, each in its container; neither
+   disappears.
+4. **Navigation:** browse inside a pinned tab in A → after ~10s A's saved set
+   shows the new URL; B is untouched until Replace.
+5. **Rename / forget:** rename A via its name field → B's popup shows the new
+   name after a sync. Forget a stale device in B → its row disappears
+   everywhere after a sync.
+6. **Pause:** pause A, pin a tab → A's saved set doesn't change; unpause →
+   it saves immediately.

@@ -1,4 +1,4 @@
-// Minimal in-memory stand-in for browser.storage.{sync,local,session}.
+// Minimal in-memory stand-in for the browser APIs the store layer touches.
 export function fakeBrowser() {
   const makeArea = () => {
     const data = {};
@@ -19,5 +19,8 @@ export function fakeBrowser() {
       _data: data,
     };
   };
-  return { storage: { sync: makeArea(), local: makeArea(), session: makeArea() } };
+  return {
+    storage: { sync: makeArea(), local: makeArea(), session: makeArea() },
+    runtime: { getPlatformInfo: async () => ({ os: "mac" }) },
+  };
 }

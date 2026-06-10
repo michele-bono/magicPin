@@ -1,67 +1,54 @@
-const PIN_PREFIX = "pin:";
-
-export async function readRemote() {
-  const all = await browser.storage.sync.get(null);
-  const pins = {};
-  for (const [key, value] of Object.entries(all)) {
-    if (key.startsWith(PIN_PREFIX)) pins[key.slice(PIN_PREFIX.length)] = value;
-  }
-  return { pins, order: Array.isArray(all.order) ? all.order : [] };
-}
-
-// Callers must not pass the same id in both `set` and `remove` (remove wins).
-// The set and remove storage calls are intentionally separate (storage.sync has
-// no transactions); if interrupted, stale pin keys linger until a later write.
-export async function writePins({ set = {}, remove = [], order } = {}) {
-  const toSet = {};
-  for (const [id, pin] of Object.entries(set)) toSet[PIN_PREFIX + id] = pin;
-  if (order) toSet.order = order;
-  if (Object.keys(toSet).length) await browser.storage.sync.set(toSet);
-  if (remove.length) await browser.storage.sync.remove(remove.map((id) => PIN_PREFIX + id));
-}
-
-// v2 = pin records may carry cookieStoreId (container identity).
-const SCHEMA_VERSION = 2;
+const DEVICE_PREFIX = "device:";
+// v3 = per-device pin sets (device:<id> records). v1/v2 used a merged global
+// set under pin:<uuid> keys; those are removed by the one-time migration and
+// older extension versions are fenced off by the version check.
+const SCHEMA_VERSION = 3;
 
 export async function ensureSchema() {
   const { meta } = await browser.storage.sync.get("meta");
-  if (!meta) {
-    await browser.storage.sync.set({ meta: { schemaVersion: 1 } });
-    return;
-  }
-  if (meta.schemaVersion > SCHEMA_VERSION) {
+  if (meta?.schemaVersion > SCHEMA_VERSION) {
     throw new Error(`magicPin: unsupported schema v${meta.schemaVersion}`);
   }
-}
-
-// Container records are a v2 concept. Stamping v2 fences off devices still
-// running the v1 extension (their ensureSchema throws -> error badge, syncing
-// stops) so their URL-only dedupe can't destroy container pins. Called lazily,
-// only when the first container record is written: container-free users keep
-// their old devices syncing.
-export async function ensureContainerSchema() {
-  const { meta } = await browser.storage.sync.get("meta");
-  if ((meta?.schemaVersion ?? 1) < 2) {
-    await browser.storage.sync.set({ meta: { schemaVersion: 2 } });
+  if ((meta?.schemaVersion ?? 0) < SCHEMA_VERSION) {
+    const all = await browser.storage.sync.get(null);
+    const legacy = Object.keys(all).filter((k) => k.startsWith("pin:") || k === "order");
+    if (legacy.length) await browser.storage.sync.remove(legacy);
+    await browser.storage.sync.set({ meta: { schemaVersion: SCHEMA_VERSION } });
   }
 }
 
-export async function readSnapshot() {
-  const { snapshot } = await browser.storage.local.get("snapshot");
-  return snapshot ?? { pins: {}, order: [] };
+// devices: { [deviceId]: { name, updatedAt, pins: [{url, title, cookieStoreId?}] } }
+export async function readDevices() {
+  const all = await browser.storage.sync.get(null);
+  const devices = {};
+  for (const [key, value] of Object.entries(all)) {
+    if (key.startsWith(DEVICE_PREFIX)) devices[key.slice(DEVICE_PREFIX.length)] = value;
+  }
+  return devices;
 }
 
-export async function writeSnapshot(snapshot) {
-  await browser.storage.local.set({ snapshot });
+export async function writeDevice(deviceId, record) {
+  await browser.storage.sync.set({ [DEVICE_PREFIX + deviceId]: record });
 }
 
-export async function readTabMap() {
-  const { tabMap } = await browser.storage.session.get("tabMap");
-  return tabMap ?? {};
+export async function removeDevice(deviceId) {
+  await browser.storage.sync.remove(DEVICE_PREFIX + deviceId);
 }
 
-export async function writeTabMap(tabMap) {
-  await browser.storage.session.set({ tabMap });
+// This device's stable id and user-editable name (storage.local: per device).
+export async function getDeviceIdentity() {
+  let { deviceId, deviceName } = await browser.storage.local.get(["deviceId", "deviceName"]);
+  if (!deviceId) {
+    deviceId = crypto.randomUUID();
+    const platform = await browser.runtime.getPlatformInfo().catch(() => ({ os: "device" }));
+    deviceName = `${platform.os} · ${deviceId.slice(0, 4)}`;
+    await browser.storage.local.set({ deviceId, deviceName });
+  }
+  return { deviceId, deviceName };
+}
+
+export async function setDeviceName(deviceName) {
+  await browser.storage.local.set({ deviceName });
 }
 
 export async function readPaused() {

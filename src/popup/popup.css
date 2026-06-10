@@ -1,5 +1,5 @@
 body {
-  width: 320px;
+  width: 360px;
   margin: 0;
   font: 13px/1.4 system-ui, sans-serif;
   color: #15141a;
@@ -18,42 +18,101 @@ h1 {
   gap: 6px;
   cursor: pointer;
 }
-#pins {
-  margin: 0;
-  padding: 4px 0;
-  list-style: none;
-  max-height: 320px;
+#devices {
+  max-height: 380px;
   overflow-y: auto;
 }
-#pins li {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 5px 12px;
+.device {
+  border-bottom: 1px solid #e0e0e6;
+  padding: 8px 12px;
 }
-#pins .title {
+.device-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.device-name {
+  font-weight: 600;
+  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-#pins .host {
+input.device-name {
+  font: inherit;
+  font-weight: 600;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  padding: 1px 4px;
+  margin-left: -5px;
+  background: transparent;
+  min-width: 0;
+}
+input.device-name:hover,
+input.device-name:focus {
+  border-color: #e0e0e6;
+  background: #fff;
+}
+.device-meta {
+  color: #5b5b66;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.device button {
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 8px;
+  border: 1px solid #cfcfd8;
+  border-radius: 4px;
+  background: #f0f0f4;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.device button:hover:not(:disabled) {
+  background: #e0e0e6;
+}
+.device button.armed {
+  background: #d7263d;
+  border-color: #d7263d;
+  color: #fff;
+}
+.device button.forget {
+  padding: 3px 7px;
+}
+.device button:disabled {
+  color: #999;
+  cursor: default;
+}
+.device ul {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.device li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+}
+.device .title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.device .host {
   color: #5b5b66;
   flex-shrink: 0;
 }
-#pins .empty {
+.empty {
+  padding: 12px;
   color: #5b5b66;
-  justify-content: center;
-}
-footer {
-  padding: 8px 12px;
-  border-top: 1px solid #e0e0e6;
-  color: #5b5b66;
+  text-align: center;
 }
 .actions {
   padding: 8px 12px;
   border-top: 1px solid #e0e0e6;
 }
-#apply {
+#sync {
   width: 100%;
   padding: 6px 8px;
   font: inherit;
@@ -63,11 +122,16 @@ footer {
   border-radius: 4px;
   cursor: pointer;
 }
-#apply:hover:not(:disabled) {
+#sync:hover:not(:disabled) {
   background: #0250bb;
 }
-#apply:disabled {
+#sync:disabled {
   background: #e0e0e6;
   color: #5b5b66;
   cursor: default;
+}
+footer {
+  padding: 8px 12px;
+  border-top: 1px solid #e0e0e6;
+  color: #5b5b66;
 }
