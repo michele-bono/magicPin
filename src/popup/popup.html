@@ -12,8 +12,15 @@
         Pause saving on this device
       </label>
     </header>
-    <div id="devices"></div>
+    <div id="sources"></div>
     <div class="actions">
+      <div class="snaprow">
+        <input id="snapname" placeholder="Snapshot name" maxlength="40" />
+        <button id="snapsave" title="Save the current pinned tabs as a named snapshot">
+          Save snapshot
+        </button>
+      </div>
+      <button id="undo" hidden></button>
       <button id="sync">Sync now</button>
     </div>
     <footer id="status"></footer>

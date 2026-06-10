@@ -59,3 +59,36 @@ export async function readPaused() {
 export async function writeLastSync(ts) {
   await browser.storage.local.set({ lastSync: ts });
 }
+
+// Snapshots: named, user-saved pin sets. Same record shape as devices but
+// only ever written explicitly — they're versions you chose to keep.
+const SNAPSHOT_PREFIX = "snapshot:";
+
+export async function readSnapshots() {
+  const all = await browser.storage.sync.get(null);
+  const snapshots = {};
+  for (const [key, value] of Object.entries(all)) {
+    if (key.startsWith(SNAPSHOT_PREFIX)) snapshots[key.slice(SNAPSHOT_PREFIX.length)] = value;
+  }
+  return snapshots;
+}
+
+export async function writeSnapshot(snapshotId, record) {
+  await browser.storage.sync.set({ [SNAPSHOT_PREFIX + snapshotId]: record });
+}
+
+export async function removeSnapshot(snapshotId) {
+  await browser.storage.sync.remove(SNAPSHOT_PREFIX + snapshotId);
+}
+
+// Undo slot (local, per device): what the pinned tabs looked like just before
+// the last replace/merge. Restoring writes the pre-restore state back into the
+// slot, so the button toggles between the two states (undo/redo).
+export async function readUndo() {
+  const { undo } = await browser.storage.local.get("undo");
+  return undo;
+}
+
+export async function writeUndo(undo) {
+  await browser.storage.local.set({ undo });
+}

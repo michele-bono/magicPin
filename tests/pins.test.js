@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { serializePins, pinsEqual, planReplace } from "../src/background/pins.js";
+import { serializePins, pinsEqual, planReplace, planMerge } from "../src/background/pins.js";
 
 const tab = (tabId, url, { index = 0, windowId = 1, title = "t", cookieStoreId } = {}) => ({
   tabId,
@@ -88,5 +88,53 @@ describe("planReplace", () => {
   it("replacing with an empty set closes everything", () => {
     const plan = planReplace([tab(1, "https://a.test/")], []);
     expect(plan).toEqual({ close: [1], sequence: [] });
+  });
+});
+
+describe("planMerge", () => {
+  it("creates only missing pins and closes nothing", () => {
+    const local = [tab(1, "https://keep.test/"), tab(2, "https://extra.test/")];
+    const target = [
+      { url: "https://keep.test/", title: "K" },
+      { url: "https://new.test/", title: "N", cookieStoreId: "firefox-container-1" },
+    ];
+    const plan = planMerge(local, target);
+    expect(plan.close).toEqual([]);
+    expect(plan.sequence).toEqual([
+      { tabId: 1 },
+      { tabId: 2 },
+      { create: { url: "https://new.test/", title: "N", cookieStoreId: "firefox-container-1" } },
+    ]);
+  });
+
+  it("preserves current local order and appends creates", () => {
+    const local = [
+      tab(1, "https://b.test/", { index: 1 }),
+      tab(2, "https://a.test/", { index: 0 }),
+    ];
+    const plan = planMerge(local, [{ url: "https://c.test/", title: "C" }]);
+    expect(plan.sequence).toEqual([
+      { tabId: 2 },
+      { tabId: 1 },
+      { create: { url: "https://c.test/", title: "C" } },
+    ]);
+  });
+
+  it("is a no-op plan when the single target pin already exists (addPin case)", () => {
+    const local = [tab(1, "https://a.test/")];
+    const plan = planMerge(local, [{ url: "https://a.test/", title: "A" }]);
+    expect(plan.close).toEqual([]);
+    expect(plan.sequence).toEqual([{ tabId: 1 }]);
+  });
+
+  it("respects container identity when deciding what is missing", () => {
+    const local = [tab(1, "https://a.test/")];
+    const plan = planMerge(local, [
+      { url: "https://a.test/", title: "A", cookieStoreId: "firefox-container-1" },
+    ]);
+    expect(plan.sequence).toEqual([
+      { tabId: 1 },
+      { create: { url: "https://a.test/", title: "A", cookieStoreId: "firefox-container-1" } },
+    ]);
   });
 });

@@ -1,4 +1,4 @@
-import { serializePins, pinsEqual, planReplace } from "./pins.js";
+import { serializePins, pinsEqual, planReplace, planMerge } from "./pins.js";
 import { applyReplace, isEcho } from "./tabsync.js";
 import * as store from "./store.js";
 import { debounce } from "./util.js";
@@ -66,24 +66,82 @@ const scheduleExport = debounce(exportPins, 2000);
 // Navigation inside pinned app tabs is frequent; give it a longer window.
 const scheduleNavExport = debounce(exportPins, 10000);
 
-// ---------- replace: make local pinned tabs match a chosen device's set ----------
+// ---------- replace / merge: adopt pins from a device, snapshot, or undo ----------
 
-const replaceWith = serialize(async (sourceDeviceId) => {
+// key: "device:<id>" | "snapshot:<id>" | "undo"
+async function resolvePins(key) {
+  if (key === "undo") return (await store.readUndo())?.pins;
+  if (key?.startsWith("device:")) return (await store.readDevices())[key.slice(7)]?.pins;
+  if (key?.startsWith("snapshot:")) return (await store.readSnapshots())[key.slice(9)]?.pins;
+  return undefined;
+}
+
+// Shared by replace and merge. Saves the pre-mutation state to the undo slot
+// first; since resolvePins("undo") reads before the slot is overwritten, the
+// undo action itself toggles between the two states (undo/redo).
+async function adoptPins(key, makePlan) {
   try {
     await store.ensureSchema();
-    const source = (await store.readDevices())[sourceDeviceId];
-    if (!source) throw new Error(`unknown device ${sourceDeviceId}`);
-    const plan = planReplace(await getLocalPinnedTabs(), source.pins);
-    await applyReplace(plan);
+    const target = await resolvePins(key);
+    if (!target) throw new Error(`unknown source ${key}`);
+    const current = await getLocalPinnedTabs();
+    await store.writeUndo({ pins: serializePins(current), savedAt: Date.now() });
+    await applyReplace(makePlan(current, target));
     await clearErrorBadge();
   } catch (e) {
-    console.error("magicPin: replace failed", e);
+    console.error("magicPin: adopt failed", e);
     await setErrorBadge();
   }
-  // The adopted set is now this device's current set; save it right away.
-  // Forced: replace is an explicit user action, so the record must mirror the
-  // result even while auto-saving is paused.
+  // The result is now this device's current set; save it right away. Forced:
+  // this is an explicit user action, so the record must mirror the result
+  // even while auto-saving is paused.
   await exportNow({ force: true });
+}
+
+const replaceWith = serialize((key) => adoptPins(key, planReplace));
+const mergeWith = serialize((key) => adoptPins(key, planMerge));
+
+// Pin one record here (no-op when an identical pin already exists). Doesn't
+// touch the undo slot — a single added pin is trivial to remove by hand.
+const addPin = serialize(async (pin) => {
+  try {
+    if (!pin?.url) return;
+    await applyReplace(planMerge(await getLocalPinnedTabs(), [pin]));
+    await clearErrorBadge();
+  } catch (e) {
+    console.error("magicPin: add pin failed", e);
+    await setErrorBadge();
+  }
+  await exportNow({ force: true });
+});
+
+// ---------- snapshots ----------
+
+const saveSnapshot = serialize(async (name) => {
+  try {
+    await store.ensureSchema();
+    const pins = serializePins(await getLocalPinnedTabs());
+    const trimmed = String(name ?? "").trim() || `Snapshot ${new Date().toLocaleDateString()}`;
+    await store.writeSnapshot(crypto.randomUUID(), {
+      name: trimmed,
+      updatedAt: Date.now(),
+      pins,
+    });
+    await store.writeLastSync(Date.now());
+    await clearErrorBadge();
+  } catch (e) {
+    console.error("magicPin: snapshot failed", e);
+    await setErrorBadge();
+  }
+});
+
+const deleteSnapshot = serialize(async (snapshotId) => {
+  try {
+    await store.removeSnapshot(snapshotId);
+  } catch (e) {
+    console.error("magicPin: delete snapshot failed", e);
+    await setErrorBadge();
+  }
 });
 
 // ---------- device management ----------
@@ -142,7 +200,12 @@ browser.tabs.onAttached.addListener((tabId) => {
 browser.runtime.onMessage.addListener((msg) => {
   // Returning the promise makes the popup's sendMessage resolve on completion.
   if (msg?.type === "sync" || msg?.type === "unpause") return exportPins();
-  if (msg?.type === "replace") return replaceWith(msg.deviceId);
+  if (msg?.type === "replace") return replaceWith(msg.key);
+  if (msg?.type === "merge") return mergeWith(msg.key);
+  if (msg?.type === "undo") return replaceWith("undo");
+  if (msg?.type === "addPin") return addPin(msg.pin);
+  if (msg?.type === "snapshot") return saveSnapshot(msg.name);
+  if (msg?.type === "deleteSnapshot") return deleteSnapshot(msg.id);
   if (msg?.type === "rename") return renameDevice(msg.name);
   if (msg?.type === "forget") return forgetDevice(msg.deviceId);
 });

@@ -15,131 +15,220 @@ function relativeTime(ts) {
   return `${Math.round(hours / 24)}d ago`;
 }
 
+function send(msg) {
+  return browser.runtime.sendMessage(msg);
+}
+
+function logError(e) {
+  console.error("magicPin popup:", e);
+}
+
 // Replace closes tabs, so it's armed on first click and runs on the second.
-let armedDeviceId = null;
+let armedKey = null;
 let busy = false;
+// Expanded/collapsed choices survive the frequent storage-driven re-renders.
+const openState = new Map();
 
-function deviceRow(deviceId, device, ownId) {
-  const isOwn = deviceId === ownId;
-  const root = document.createElement("div");
-  root.className = "device";
-
-  const head = document.createElement("div");
-  head.className = "device-head";
-
-  if (isOwn) {
-    const name = document.createElement("input");
-    name.className = "device-name";
-    name.value = device.name;
-    name.title = "Rename this device";
-    name.addEventListener("change", () => {
-      browser.runtime
-        .sendMessage({ type: "rename", name: name.value })
-        .catch((e) => console.error("magicPin popup:", e));
-    });
-    head.append(name);
-  } else {
-    const name = document.createElement("span");
-    name.className = "device-name";
-    name.textContent = device.name;
-    head.append(name);
+async function runAction(msg) {
+  busy = true;
+  render().catch(logError);
+  try {
+    await send(msg);
+  } catch (e) {
+    logError(e);
+  } finally {
+    busy = false;
+    render().catch(logError);
   }
+}
 
-  const meta = document.createElement("span");
-  meta.className = "device-meta";
-  meta.textContent = isOwn
-    ? `this device · ${device.pins.length}`
-    : `${device.pins.length} · ${relativeTime(device.updatedAt)}`;
-  head.append(meta);
+// Buttons inside <summary> must not toggle the <details>.
+function summaryButton(label, title, onClick) {
+  const button = document.createElement("button");
+  button.textContent = label;
+  if (title) button.title = title;
+  button.disabled = busy;
+  button.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onClick();
+  });
+  return button;
+}
 
-  if (!isOwn) {
-    const replace = document.createElement("button");
-    const armed = armedDeviceId === deviceId;
-    replace.textContent = armed ? "Sure? This closes tabs" : "Replace";
-    replace.className = armed ? "armed" : "";
-    replace.disabled = busy;
-    replace.addEventListener("click", async () => {
-      if (armedDeviceId !== deviceId) {
-        armedDeviceId = deviceId;
-        render();
-        return;
-      }
-      armedDeviceId = null;
-      busy = true;
-      render();
-      try {
-        await browser.runtime.sendMessage({ type: "replace", deviceId });
-      } catch (e) {
-        console.error("magicPin popup:", e);
-      } finally {
-        busy = false;
-        render();
-      }
-    });
-    head.append(replace);
-
-    const forget = document.createElement("button");
-    forget.className = "forget";
-    forget.textContent = "✕";
-    forget.title = "Forget this device's saved pins";
-    forget.addEventListener("click", () => {
-      browser.runtime
-        .sendMessage({ type: "forget", deviceId })
-        .catch((e) => console.error("magicPin popup:", e));
-    });
-    head.append(forget);
-  }
-
-  root.append(head);
-
+function pinList(pins) {
   const ul = document.createElement("ul");
-  for (const pin of device.pins) {
+  for (const pin of pins) {
     const li = document.createElement("li");
+
+    const add = document.createElement("button");
+    add.className = "addpin";
+    add.textContent = "+";
+    add.title = "Pin this here";
+    add.disabled = busy;
+    add.addEventListener("click", () => runAction({ type: "addPin", pin }));
+
     const title = document.createElement("span");
     title.className = "title";
     title.textContent = pin.title || pin.url;
+    title.title = pin.url;
+
     const host = document.createElement("span");
     host.className = "host";
     host.textContent = pin.cookieStoreId ? `${safeHost(pin.url)} ▣` : safeHost(pin.url);
     if (pin.cookieStoreId) host.title = `Container: ${pin.cookieStoreId}`;
-    li.append(title, host);
+
+    li.append(add, title, host);
     ul.append(li);
   }
-  root.append(ul);
-  return root;
+  if (!pins.length) {
+    const li = document.createElement("li");
+    li.className = "none";
+    li.textContent = "no pins";
+    ul.append(li);
+  }
+  return ul;
 }
+
+// One collapsible row for a device or snapshot.
+function sourceSection({ key, record, isOwn, open }) {
+  const details = document.createElement("details");
+  details.className = "source";
+  details.open = openState.has(key) ? openState.get(key) : open;
+  details.addEventListener("toggle", () => openState.set(key, details.open));
+
+  const summary = document.createElement("summary");
+
+  if (isOwn) {
+    const name = document.createElement("input");
+    name.className = "source-name";
+    name.value = record.name;
+    name.title = "Rename this device";
+    name.addEventListener("click", (e) => e.preventDefault());
+    name.addEventListener("change", () =>
+      send({ type: "rename", name: name.value }).catch(logError)
+    );
+    summary.append(name);
+  } else {
+    const name = document.createElement("span");
+    name.className = "source-name";
+    name.textContent = record.name;
+    summary.append(name);
+  }
+
+  const meta = document.createElement("span");
+  meta.className = "source-meta";
+  meta.textContent = isOwn
+    ? `this device · ${record.pins.length}`
+    : `${record.pins.length} · ${relativeTime(record.updatedAt)}`;
+  summary.append(meta);
+
+  if (!isOwn) {
+    const armed = armedKey === key;
+    const replace = summaryButton(
+      armed ? "Sure? Closes tabs" : "Replace",
+      "Make this device's pinned tabs match this set (two clicks)",
+      () => {
+        if (armedKey !== key) {
+          armedKey = key;
+          render().catch(logError);
+          return;
+        }
+        armedKey = null;
+        runAction({ type: "replace", key });
+      }
+    );
+    if (armed) replace.className = "armed";
+    summary.append(replace);
+
+    summary.append(
+      summaryButton("Merge", "Add this set's missing pins here, close nothing", () =>
+        runAction({ type: "merge", key })
+      )
+    );
+
+    const isSnapshot = key.startsWith("snapshot:");
+    const remove = summaryButton(
+      "✕",
+      isSnapshot ? "Delete this snapshot" : "Forget this device's saved pins",
+      () =>
+        send(
+          isSnapshot
+            ? { type: "deleteSnapshot", id: key.slice(9) }
+            : { type: "forget", deviceId: key.slice(7) }
+        ).catch(logError)
+    );
+    remove.classList.add("remove");
+    summary.append(remove);
+  }
+
+  details.append(summary, pinList(record.pins));
+  return details;
+}
+
+function groupHeading(text) {
+  const h2 = document.createElement("h2");
+  h2.textContent = text;
+  return h2;
+}
+
+const validRecord = (d) => d && typeof d.name === "string" && Array.isArray(d.pins);
 
 async function render() {
   const all = await browser.storage.sync.get(null);
-  const { paused, lastSync, deviceId: ownId } = await browser.storage.local.get([
+  const { paused, lastSync, deviceId: ownId, undo } = await browser.storage.local.get([
     "paused",
     "lastSync",
     "deviceId",
+    "undo",
   ]);
 
   document.getElementById("pause").checked = Boolean(paused);
   document.getElementById("sync").disabled = busy || Boolean(paused);
+  document.getElementById("snapsave").disabled = busy;
 
-  const devices = Object.keys(all)
-    .filter((k) => k.startsWith("device:"))
-    .map((k) => [k.slice(7), all[k]])
-    // Tolerate malformed or future-schema records instead of blanking the UI.
-    .filter(([, d]) => d && typeof d.name === "string" && Array.isArray(d.pins))
-    // Own device first, then most recently saved.
-    .sort(([idA, a], [idB, b]) =>
-      idA === ownId ? -1 : idB === ownId ? 1 : (b.updatedAt ?? 0) - (a.updatedAt ?? 0)
-    );
+  const undoButton = document.getElementById("undo");
+  undoButton.hidden = !undo;
+  if (undo) {
+    undoButton.textContent = `Undo last replace (${relativeTime(undo.savedAt)})`;
+    undoButton.disabled = busy;
+  }
 
-  const container = document.getElementById("devices");
+  const byPrefix = (prefix) =>
+    Object.keys(all)
+      .filter((k) => k.startsWith(prefix))
+      .map((k) => [k, all[k]])
+      // Tolerate malformed or future-schema records instead of blanking the UI.
+      .filter(([, d]) => validRecord(d));
+
+  const devices = byPrefix("device:").sort(([keyA, a], [keyB, b]) =>
+    keyA === `device:${ownId}`
+      ? -1
+      : keyB === `device:${ownId}`
+        ? 1
+        : (b.updatedAt ?? 0) - (a.updatedAt ?? 0)
+  );
+  const snapshots = byPrefix("snapshot:").sort(([, a], [, b]) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+
+  const container = document.getElementById("sources");
   container.textContent = "";
-  for (const [deviceId, device] of devices) {
-    container.append(deviceRow(deviceId, device, ownId));
+
+  for (const [key, record] of devices) {
+    const isOwn = key === `device:${ownId}`;
+    container.append(sourceSection({ key, record, isOwn, open: isOwn }));
   }
   if (!devices.length) {
     const div = document.createElement("div");
     div.className = "empty";
     div.textContent = "No saved devices yet — pin a tab to save this device's set";
     container.append(div);
+  }
+
+  if (snapshots.length) {
+    container.append(groupHeading("Snapshots"));
+    for (const [key, record] of snapshots) {
+      container.append(sourceSection({ key, record, isOwn: false, open: false }));
+    }
   }
 
   document.getElementById("status").textContent = lastSync
@@ -151,40 +240,39 @@ document.getElementById("pause").addEventListener("change", async (e) => {
   await browser.storage.local.set({ paused: e.target.checked });
   if (!e.target.checked) {
     // Save current state immediately on unpause.
-    browser.runtime.sendMessage({ type: "unpause" }).catch(() => {});
+    send({ type: "unpause" }).catch(() => {});
   }
-  render().catch((e2) => console.error("magicPin popup:", e2));
+  render().catch(logError);
 });
 
 document.getElementById("sync").addEventListener("click", async () => {
   const button = document.getElementById("sync");
-  busy = true;
-  button.disabled = true;
   button.textContent = "Saving…";
-  try {
-    await browser.runtime.sendMessage({ type: "sync" });
-  } catch (e) {
-    console.error("magicPin popup:", e);
-  } finally {
-    busy = false;
-    button.textContent = "Sync now";
-    render().catch(() => {});
-  }
+  await runAction({ type: "sync" });
+  button.textContent = "Sync now";
 });
+
+document.getElementById("snapsave").addEventListener("click", async () => {
+  const input = document.getElementById("snapname");
+  await runAction({ type: "snapshot", name: input.value });
+  input.value = "";
+});
+
+document.getElementById("undo").addEventListener("click", () => runAction({ type: "undo" }));
 
 // Clicking anywhere that isn't a button disarms a pending Replace. (Button
 // clicks manage the armed state themselves; this handler runs after them in
 // the bubble phase, by which point render() has already swapped the row DOM.)
 document.addEventListener("click", (e) => {
-  if (armedDeviceId !== null && !e.target.closest("button")) {
-    armedDeviceId = null;
+  if (armedKey !== null && !e.target.closest("button")) {
+    armedKey = null;
     render().catch(() => {});
   }
 });
 
 // Re-render while open so incoming syncs stay current.
 browser.storage.onChanged.addListener(() => {
-  render().catch((e) => console.error("magicPin popup:", e));
+  render().catch(logError);
 });
 
 render();

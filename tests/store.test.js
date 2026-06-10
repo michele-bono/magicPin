@@ -69,3 +69,32 @@ describe("store", () => {
     expect(globalThis.browser.storage.local._data.lastSync).toBe(12345);
   });
 });
+
+describe("snapshots and undo", () => {
+  const record = (name, pins = []) => ({ name, updatedAt: 1, pins });
+
+  it("round-trips snapshot records separately from devices", async () => {
+    await store.writeDevice("d1", record("Laptop"));
+    await store.writeSnapshot("s1", record("Work", [{ url: "https://a.test/", title: "A" }]));
+    expect(await store.readSnapshots()).toEqual({
+      s1: record("Work", [{ url: "https://a.test/", title: "A" }]),
+    });
+    expect(await store.readDevices()).toEqual({ d1: record("Laptop") });
+  });
+
+  it("removes snapshots by id", async () => {
+    await store.writeSnapshot("s1", record("Work"));
+    await store.removeSnapshot("s1");
+    expect(await store.readSnapshots()).toEqual({});
+  });
+
+  it("round-trips the undo slot through local storage", async () => {
+    expect(await store.readUndo()).toBeUndefined();
+    await store.writeUndo({ pins: [{ url: "https://a.test/", title: "A" }], savedAt: 5 });
+    expect(await store.readUndo()).toEqual({
+      pins: [{ url: "https://a.test/", title: "A" }],
+      savedAt: 5,
+    });
+    expect(globalThis.browser.storage.local._data.undo).toBeDefined();
+  });
+});

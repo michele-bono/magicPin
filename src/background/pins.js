@@ -52,3 +52,23 @@ export function planReplace(localTabs, target) {
   }
   return { close: unused.map((t) => t.tabId), sequence };
 }
+
+// Plan a non-destructive merge: keep every local pinned tab in its current
+// order, append target pins whose identity isn't present yet. Also serves the
+// single-pin import case (planMerge(local, [pin]) no-ops when already pinned).
+export function planMerge(localTabs, target) {
+  const sorted = [...(localTabs ?? [])].sort(
+    (a, b) => a.windowId - b.windowId || a.index - b.index
+  );
+  const unused = [...sorted];
+  const creates = [];
+  for (const want of target ?? []) {
+    const i = unused.findIndex((t) => sameIdentity(t, want));
+    if (i !== -1) {
+      unused.splice(i, 1);
+    } else {
+      creates.push({ create: { url: want.url, title: want.title, ...containerField(want) } });
+    }
+  }
+  return { close: [], sequence: [...sorted.map((t) => ({ tabId: t.tabId })), ...creates] };
+}

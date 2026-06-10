@@ -23,12 +23,20 @@ minutes; immediately on browser startup/focus in practice).
   changes by itself.
 - **One saved version per device.** The popup lists every device with its
   saved pins, names, and when it last saved.
-- **Replace from any device.** Each other device has a **Replace** button
-  (click twice — it closes tabs) that makes this device's pinned tabs match
-  that device's saved set: tabs that already match are kept (no reload),
-  missing pins are created lazily (discarded), everything else is closed, and
-  the order is matched. The adopted set immediately becomes this device's
-  saved set too.
+- **Replace from any device or snapshot.** Every other set has a **Replace**
+  button (click twice — it closes tabs) that makes this device's pinned tabs
+  match it: tabs that already match are kept (no reload), missing pins are
+  created lazily (discarded), everything else is closed, and the order is
+  matched. The adopted set immediately becomes this device's saved set too.
+- **Undo.** Replace and Merge first save what you had; the **Undo** button
+  restores it (and pressing it again redoes — it toggles between the two
+  states). Per device, survives popup closes, replaced on the next adopt.
+- **Merge** adds a set's missing pins here without closing anything.
+- **Pin one thing:** the **+** next to any pin in any set pins just that one
+  here (no-op if you already have it).
+- **Named snapshots.** "Save snapshot" stores the current set under a name
+  ("Work", "Research", …). Snapshots sync to every device, never change on
+  their own, and support Replace/Merge/+ like devices. Delete with ✕.
 - **Containers respected:** the same URL pinned in different Firefox
   containers is two distinct pins (marked ▣ in the popup), and Replace
   recreates each pin in its container.
@@ -39,7 +47,10 @@ minutes; immediately on browser startup/focus in practice).
 - **Rename / forget:** click this device's name in the popup to rename it;
   forget (✕) removes a stale device's saved set.
 - **Pause** stops this device from saving (per-device). A red `!` badge means
-  the last save failed.
+  the last save failed. Explicit actions (Replace/Merge/Undo/+) still save
+  their result while paused.
+- **Dark mode** follows the system theme; **Ctrl+Alt+P** (configurable in
+  about:addons → gear → Manage Extension Shortcuts) opens the popup.
 
 ## Known limitations
 
@@ -47,8 +58,9 @@ minutes; immediately on browser startup/focus in practice).
   Firefox offers no API to detect this.
 - Privileged pins (`about:*`, `file:*`) can't be recreated by extensions and
   are skipped during Replace.
-- A device's saved set must fit in one sync record (~8 KB ≈ 40+ pins
-  depending on URL length).
+- Each device set or snapshot must fit in one sync record (~8 KB ≈ 40+ pins
+  depending on URL length), and everything shares Firefox Sync's ~100 KB
+  total — roughly a dozen sets/snapshots.
 - Container pins are recreated in the same container. Firefox's four built-in
   containers match across devices; user-created containers have per-profile
   IDs, so on another device the pin may open in whichever container has that
@@ -88,3 +100,9 @@ waiting for the schedule. Then verify:
    everywhere after a sync.
 6. **Pause:** pause A, pin a tab → A's saved set doesn't change; unpause →
    it saves immediately.
+7. **Snapshot + undo:** save a snapshot "Test" in A, Sync now → it appears in
+   B; Replace from it in B → B matches; click Undo in B → B's previous pins
+   come back; click Undo again → "Test" set returns.
+8. **Merge and +:** in B, Merge from A's row → only A's missing pins are
+   added, nothing closes; click + on a single pin → just that pin appears
+   (in its container if it had one).
