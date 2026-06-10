@@ -264,6 +264,10 @@ browser.tabs.onAttached.addListener((tabId) => {
     .catch((e) => console.error("magicPin: attach tracking failed", e));
 });
 
+browser.runtime.onMessage.addListener((msg) => {
+  if (msg?.type === "unpause") scheduleReconcile();
+});
+
 browser.storage.onChanged.addListener((changes, area) => {
   if (area === "sync") scheduleReconcile();
 });

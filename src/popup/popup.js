@@ -45,6 +45,16 @@ async function render() {
 
 document.getElementById("pause").addEventListener("change", async (e) => {
   await browser.storage.local.set({ paused: e.target.checked });
+  if (!e.target.checked) {
+    // Kick the background so unpausing catches up immediately instead of
+    // waiting for the next sync/focus event.
+    browser.runtime.sendMessage({ type: "unpause" }).catch(() => {});
+  }
+});
+
+// Re-render while open so incoming syncs and lastSync stay current.
+browser.storage.onChanged.addListener(() => {
+  render().catch((e) => console.error("magicPin popup:", e));
 });
 
 render();
