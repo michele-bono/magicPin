@@ -3,9 +3,15 @@
   "name": "magicPin",
   "version": "0.2.0",
   "description": "Save each device's pinned tabs to your Firefox Account and restore any device's set with one click.",
-  "permissions": ["tabs", "storage", "cookies"],
+  "permissions": [
+    "tabs",
+    "storage",
+    "cookies"
+  ],
   "background": {
-    "scripts": ["src/background/main.js"],
+    "scripts": [
+      "src/background/main.js"
+    ],
     "type": "module"
   },
   "action": {
@@ -15,7 +21,12 @@
   "browser_specific_settings": {
     "gecko": {
       "id": "magicpin@voixstream.net",
-      "strict_min_version": "115.0"
+      "strict_min_version": "115.0",
+      "data_collection_permissions": {
+        "required": [
+          "none"
+        ]
+      }
     }
   }
 }

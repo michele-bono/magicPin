@@ -16,17 +16,11 @@ export function isEcho(tabId) {
   return inFlight.has(tabId);
 }
 
-// Makes local pinned tabs match a planReplace() plan: close, create, reorder.
+// Makes local pinned tabs match a planReplace() plan: create, close, reorder.
+// Creates run BEFORE closes: if the only window held only to-be-closed pinned
+// tabs, closing first would close the window (or quit the browser) and abort
+// the replace half-way.
 export async function applyReplace(plan) {
-  for (const tabId of plan.close) {
-    markEcho(tabId);
-    try {
-      await browser.tabs.remove(tabId);
-    } catch {
-      // Tab already gone.
-    }
-  }
-
   const windowId = await getTargetWindowId();
   const finalIds = [];
   for (const step of plan.sequence) {
@@ -40,12 +34,23 @@ export async function applyReplace(plan) {
     }
     try {
       const tab = await createPinnedTab(windowId, step.create);
+      // markEcho lands after the create resolves, so the new tab's very first
+      // events can slip through — harmless: they only queue a no-op export.
       markEcho(tab.id);
       finalIds.push(tab.id);
     } catch (e) {
       // Privileged URLs (about:, file:) and containers that don't exist on
       // this device can't be created; skip rather than guess.
       console.warn("magicPin: could not create pinned tab for", step.create.url, e);
+    }
+  }
+
+  for (const tabId of plan.close) {
+    markEcho(tabId);
+    try {
+      await browser.tabs.remove(tabId);
+    } catch {
+      // Tab already gone.
     }
   }
 

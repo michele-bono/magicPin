@@ -43,9 +43,9 @@ function serialize(fn) {
 // One writer per device record means no cross-device merging, ever. Nothing
 // in this extension mutates tabs except the explicit replace below.
 
-async function exportNow() {
+async function exportNow({ force = false } = {}) {
   try {
-    if (await store.readPaused()) return;
+    if (!force && (await store.readPaused())) return;
     await store.ensureSchema();
     const { deviceId, deviceName } = await store.getDeviceIdentity();
     const pins = serializePins(await getLocalPinnedTabs());
@@ -81,7 +81,9 @@ const replaceWith = serialize(async (sourceDeviceId) => {
     await setErrorBadge();
   }
   // The adopted set is now this device's current set; save it right away.
-  await exportNow();
+  // Forced: replace is an explicit user action, so the record must mirror the
+  // result even while auto-saving is paused.
+  await exportNow({ force: true });
 });
 
 // ---------- device management ----------

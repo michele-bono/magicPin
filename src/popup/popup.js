@@ -123,6 +123,8 @@ async function render() {
   const devices = Object.keys(all)
     .filter((k) => k.startsWith("device:"))
     .map((k) => [k.slice(7), all[k]])
+    // Tolerate malformed or future-schema records instead of blanking the UI.
+    .filter(([, d]) => d && typeof d.name === "string" && Array.isArray(d.pins))
     // Own device first, then most recently saved.
     .sort(([idA, a], [idB, b]) =>
       idA === ownId ? -1 : idB === ownId ? 1 : (b.updatedAt ?? 0) - (a.updatedAt ?? 0)
@@ -166,6 +168,16 @@ document.getElementById("sync").addEventListener("click", async () => {
   } finally {
     busy = false;
     button.textContent = "Sync now";
+    render().catch(() => {});
+  }
+});
+
+// Clicking anywhere that isn't a button disarms a pending Replace. (Button
+// clicks manage the armed state themselves; this handler runs after them in
+// the bubble phase, by which point render() has already swapped the row DOM.)
+document.addEventListener("click", (e) => {
+  if (armedDeviceId !== null && !e.target.closest("button")) {
+    armedDeviceId = null;
     render().catch(() => {});
   }
 });
