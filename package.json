@@ -1,6 +1,6 @@
 {
   "name": "magicpin",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Firefox extension: each device's pinned tabs saved to your Firefox Account \u2014 restore, merge, or snapshot any device's set in one click.",
   "author": "Michele Bono",
   "license": "MIT",
