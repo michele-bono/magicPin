@@ -66,6 +66,25 @@ export function computeLocalOrder(localTabs, tabMap) {
     .filter(Boolean);
 }
 
+// Collapse remote pins that share a URL — the artifact of two devices
+// concurrently uploading the same pin on first run. Every device keeps the
+// lexicographically smallest id, so they all converge on the same survivor.
+// (Intentionally also collapses user-created same-URL duplicates; v1 trade-off.)
+export function dedupeRemotePins(remotePins) {
+  const byUrl = new Map();
+  for (const [id, p] of Object.entries(remotePins ?? {})) {
+    if (!byUrl.has(p.url)) byUrl.set(p.url, []);
+    byUrl.get(p.url).push(id);
+  }
+  const remove = [];
+  for (const ids of byUrl.values()) {
+    if (ids.length < 2) continue;
+    ids.sort();
+    remove.push(...ids.slice(1));
+  }
+  return remove;
+}
+
 // Merge-on-write: build url updates ONLY for pins this device navigated,
 // so a stale device never clobbers another device's fresher urls.
 // Assumes tabMap is injective (one tabId per pinId), which computeDiff guarantees.

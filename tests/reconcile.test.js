@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeDiff, computeLocalOrder, navUpdates } from "../src/background/reconcile.js";
+import { computeDiff, computeLocalOrder, navUpdates, dedupeRemotePins } from "../src/background/reconcile.js";
 
 export const pin = (url, title = "t") => ({ url, title, updatedAt: 1 });
 export const tab = (tabId, url, { index = 0, windowId = 1, title = "t" } = {}) => ({
@@ -196,5 +196,31 @@ describe("navUpdates (merge-on-write)", () => {
       a: { url: "https://a.test/new", title: "A", updatedAt: 99 },
       b: { url: "https://b.test/new", title: "B", updatedAt: 99 },
     });
+  });
+});
+
+describe("dedupeRemotePins", () => {
+  it("returns ids to delete for url duplicates, keeping the smallest id", () => {
+    const pins = {
+      b: pin("https://a.test/"),
+      a: pin("https://a.test/"),
+      c: pin("https://c.test/"),
+    };
+    expect(dedupeRemotePins(pins)).toEqual(["b"]);
+  });
+
+  it("returns [] when all urls are distinct or pins are empty", () => {
+    expect(dedupeRemotePins({ a: pin("https://a.test/"), b: pin("https://b.test/") })).toEqual([]);
+    expect(dedupeRemotePins({})).toEqual([]);
+    expect(dedupeRemotePins(undefined)).toEqual([]);
+  });
+
+  it("removes all but one of three duplicates deterministically", () => {
+    const pins = {
+      c: pin("https://x.test/"),
+      a: pin("https://x.test/"),
+      b: pin("https://x.test/"),
+    };
+    expect(dedupeRemotePins(pins).sort()).toEqual(["b", "c"]);
   });
 });

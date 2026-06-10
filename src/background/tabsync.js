@@ -3,6 +3,9 @@
 
 const ECHO_MS = 3000;
 const inFlight = new Map(); // tabId -> timeout id
+// Pins whose tab creation failed (e.g. privileged about:/file: URLs): skip
+// retrying until the pin's URL changes, to avoid per-reconcile churn and spam.
+const failedCreates = new Map(); // pinId -> url
 
 export function markEcho(tabId) {
   clearTimeout(inFlight.get(tabId));
@@ -35,12 +38,15 @@ export async function applyDiff(diff) {
       console.warn("magicPin: no normal window available; skipping", diff.create.length, "create(s)");
     } else {
       for (const { pinId, url, title } of diff.create) {
+        if (failedCreates.get(pinId) === url) continue;
         try {
           const tab = await createPinnedTab(windowId, url, title);
           markEcho(tab.id);
           map[tab.id] = pinId;
+          failedCreates.delete(pinId);
         } catch (e) {
           // Privileged URLs (about:, file:) can't be created by extensions.
+          failedCreates.set(pinId, url);
           console.warn("magicPin: could not create pinned tab for", url, e);
         }
       }
@@ -71,13 +77,16 @@ async function getTargetWindowId() {
   return (focused ?? candidates[0]).id;
 }
 
-// Reorder pinned tabs to match the synced order, per window.
+// Reorder pinned tabs to match the synced order, per window. Only tabs that
+// are actually out of place are moved (and echo-marked) — blanket marking
+// would swallow real user unpin/close events for 3s after every reconcile.
 async function applyOrder(order, map) {
   const pinToTab = {};
   for (const [tabId, pinId] of Object.entries(map)) pinToTab[pinId] = Number(tabId);
 
   const tabs = await browser.tabs.query({ pinned: true });
-  const byId = new Map(tabs.filter((t) => !t.incognito).map((t) => [t.id, t]));
+  const eligible = tabs.filter((t) => !t.incognito);
+  const byId = new Map(eligible.map((t) => [t.id, t]));
 
   const perWindow = new Map();
   for (const pinId of order) {
@@ -87,17 +96,27 @@ async function applyOrder(order, map) {
     perWindow.get(tab.windowId).push(tab.id);
   }
 
-  for (const [windowId, tabIds] of perWindow) {
-    for (let i = 0; i < tabIds.length; i++) {
+  for (const [windowId, desired] of perWindow) {
+    // Current left-to-right pinned order in this window, updated as we move.
+    const current = eligible
+      .filter((t) => t.windowId === windowId)
+      .sort((a, b) => a.index - b.index)
+      .map((t) => t.id);
+    for (let i = 0; i < desired.length; i++) {
+      if (current[i] === desired[i]) continue; // already in place
       // markEcho BEFORE the call: our own onMoved event may dispatch before the
       // promise continuation runs. If the move fails, the stray 3s mark can at
       // worst suppress one user reorder, which the next reconcile repairs.
-      markEcho(tabIds[i]);
+      markEcho(desired[i]);
       try {
-        await browser.tabs.move(tabIds[i], { windowId, index: i });
+        await browser.tabs.move(desired[i], { windowId, index: i });
       } catch {
         // Window may have closed mid-apply; skip.
+        continue;
       }
+      const from = current.indexOf(desired[i]);
+      if (from !== -1) current.splice(from, 1);
+      current.splice(i, 0, desired[i]);
     }
   }
 }
