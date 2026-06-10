@@ -1,0 +1,51 @@
+body {
+  width: 320px;
+  margin: 0;
+  font: 13px/1.4 system-ui, sans-serif;
+  color: #15141a;
+}
+header {
+  padding: 10px 12px;
+  border-bottom: 1px solid #e0e0e6;
+}
+h1 {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+#pins {
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  max-height: 320px;
+  overflow-y: auto;
+}
+#pins li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 12px;
+}
+#pins .title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#pins .host {
+  color: #5b5b66;
+  flex-shrink: 0;
+}
+#pins .empty {
+  color: #5b5b66;
+  justify-content: center;
+}
+footer {
+  padding: 8px 12px;
+  border-top: 1px solid #e0e0e6;
+  color: #5b5b66;
+}

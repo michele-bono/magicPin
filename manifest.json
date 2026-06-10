@@ -9,7 +9,8 @@
     "type": "module"
   },
   "action": {
-    "default_title": "magicPin"
+    "default_title": "magicPin",
+    "default_popup": "src/popup/popup.html"
   },
   "browser_specific_settings": {
     "gecko": {
