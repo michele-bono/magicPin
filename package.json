@@ -15,9 +15,8 @@
   "webExt": {
     "sourceDir": ".",
     "ignoreFiles": [
-      "node_modules",
-      "tests",
-      "docs",
+      "tests/**",
+      "docs/**",
       "package.json",
       "package-lock.json",
       ".gitignore",
