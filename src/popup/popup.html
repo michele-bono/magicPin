@@ -6,28 +6,32 @@
   </head>
   <body>
     <header>
-      <h1>magicPin</h1>
-      <label class="toggle">
+      <div class="brand">
+        <img class="mark" src="../../icons/magicpin.svg" alt="" width="22" height="22" />
+        <h1>magicPin</h1>
+      </div>
+      <label class="toggle" title="Pause saving on this device">
         <input type="checkbox" id="pause" />
-        Pause saving on this device
+        <span class="knob" aria-hidden="true"></span>
+        <span class="toggle-label">pause</span>
       </label>
     </header>
     <div id="sources"></div>
     <div class="actions">
       <div class="snaprow">
-        <input id="snapname" placeholder="Snapshot name" maxlength="40" />
+        <input id="snapname" placeholder="Name a snapshot…" maxlength="40" />
         <button id="snapsave" title="Save the current pinned tabs as a named snapshot">
-          Save snapshot
+          Save
         </button>
       </div>
       <button id="undo" hidden></button>
       <button id="sync">Sync now</button>
       <div class="iorow">
         <button id="export" title="Download all sets and snapshots as a JSON backup">
-          Export backup
+          ↓ Export
         </button>
         <button id="import" title="Import a backup file — its sets become snapshots">
-          Import backup
+          ↑ Import
         </button>
         <input id="importfile" type="file" accept=".json,application/json" hidden />
       </div>
@@ -35,7 +39,10 @@
     <footer>
       <div id="error" hidden></div>
       <div id="status"></div>
-      <div id="quota"></div>
+      <div class="quota-line">
+        <span id="quota"></span>
+        <div id="quotabar"><i></i></div>
+      </div>
     </footer>
     <script src="popup.js" type="module"></script>
   </body>

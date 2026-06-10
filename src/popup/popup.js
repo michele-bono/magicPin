@@ -9,6 +9,14 @@ function safeHost(url) {
   }
 }
 
+// Stable per-hostname hue for the pin dots — favicons would need network or
+// quota; a deterministic color chip is instant and offline.
+function hueOf(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) % 360;
+  return h;
+}
+
 function relativeTime(ts) {
   const minutes = Math.round((Date.now() - ts) / 60000);
   if (minutes < 1) return "just now";
@@ -92,6 +100,10 @@ function pinList(pins) {
     add.disabled = busy;
     add.addEventListener("click", () => runAction({ type: "addPin", pin }));
 
+    const dot = document.createElement("span");
+    dot.className = "dot";
+    dot.style.backgroundColor = `hsl(${hueOf(safeHost(pin.url) || pin.url)} 65% 55%)`;
+
     const title = document.createElement("span");
     title.className = "title";
     title.textContent = pin.title || pin.url;
@@ -102,7 +114,7 @@ function pinList(pins) {
     host.textContent = pin.cookieStoreId ? `${safeHost(pin.url)} ▣` : safeHost(pin.url);
     if (pin.cookieStoreId) host.title = `Container: ${pin.cookieStoreId}`;
 
-    li.append(add, title, host);
+    li.append(add, dot, title, host);
     ul.append(li);
   }
   if (!pins.length) {
@@ -115,9 +127,10 @@ function pinList(pins) {
 }
 
 // One collapsible row for a device or snapshot.
-function sourceSection({ key, record, isOwn, open }) {
+function sourceSection({ key, record, isOwn, open, index = 0 }) {
   const details = document.createElement("details");
   details.className = "source";
+  details.style.setProperty("--i", index);
   details.open = openState.has(key) ? openState.get(key) : open;
   details.addEventListener("toggle", () => openState.set(key, details.open));
 
@@ -250,9 +263,10 @@ async function render() {
   const container = document.getElementById("sources");
   container.textContent = "";
 
+  let index = 0;
   for (const [key, record] of devices) {
     const isOwn = key === `device:${ownId}`;
-    container.append(sourceSection({ key, record, isOwn, open: isOwn }));
+    container.append(sourceSection({ key, record, isOwn, open: isOwn, index: index++ }));
   }
   if (!devices.length) {
     const div = document.createElement("div");
@@ -264,7 +278,7 @@ async function render() {
   if (snapshots.length) {
     container.append(groupHeading("Snapshots"));
     for (const [key, record] of snapshots) {
-      container.append(sourceSection({ key, record, isOwn: false, open: false }));
+      container.append(sourceSection({ key, record, isOwn: false, open: false, index: index++ }));
     }
   }
 
@@ -293,9 +307,13 @@ async function renderQuota(all) {
   } catch {
     bytes = new TextEncoder().encode(JSON.stringify(all)).length; // estimate
   }
-  const quotaKb = (browser.storage.sync.QUOTA_BYTES ?? 102400) / 1024;
+  const quotaBytes = browser.storage.sync.QUOTA_BYTES ?? 102400;
   document.getElementById("quota").textContent =
-    `Sync storage: ${(bytes / 1024).toFixed(1)} / ${Math.round(quotaKb)} KB`;
+    `${(bytes / 1024).toFixed(1)} / ${Math.round(quotaBytes / 1024)} KB`;
+  const fill = document.querySelector("#quotabar i");
+  const fraction = Math.min(1, bytes / quotaBytes);
+  fill.style.width = `${(fraction * 100).toFixed(1)}%`;
+  fill.classList.toggle("warn", fraction > 0.8);
 }
 
 document.getElementById("pause").addEventListener("change", async (e) => {
@@ -356,9 +374,17 @@ document.addEventListener("click", (e) => {
   }
 });
 
-// Re-render while open so incoming syncs stay current.
-browser.storage.onChanged.addListener(() => {
-  render().catch(logError);
-});
+// Re-render while open so incoming syncs stay current. Bursts (an import
+// writing 20 snapshots) coalesce into one paint per frame.
+let renderQueued = false;
+function scheduleRender() {
+  if (renderQueued) return;
+  renderQueued = true;
+  requestAnimationFrame(() => {
+    renderQueued = false;
+    render().catch(logError);
+  });
+}
+browser.storage.onChanged.addListener(scheduleRender);
 
 render();

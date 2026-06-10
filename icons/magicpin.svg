@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#171c2e"/>
+      <stop offset="1" stop-color="#0e1220"/>
+    </linearGradient>
+    <linearGradient id="pin" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ff8a5c"/>
+      <stop offset="1" stop-color="#ff5c4d"/>
+    </linearGradient>
+    <pattern id="pegs" width="16" height="16" patternUnits="userSpaceOnUse">
+      <circle cx="8" cy="8" r="1.8" fill="#2b334d"/>
+    </pattern>
+    <clipPath id="round">
+      <rect width="128" height="128" rx="28"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#round)">
+    <rect width="128" height="128" fill="url(#tile)"/>
+    <rect width="128" height="128" fill="url(#pegs)"/>
+    <!-- soft glow behind the pin -->
+    <circle cx="58" cy="62" r="36" fill="#ff5c4d" opacity="0.10"/>
+  </g>
+
+  <!-- pushpin, tilted like it was just pressed in -->
+  <g transform="rotate(33 58 60)" clip-path="url(#round)">
+    <rect x="46" y="24" width="24" height="12" rx="6" fill="url(#pin)"/>
+    <rect x="52" y="34" width="12" height="14" fill="url(#pin)"/>
+    <rect x="40" y="46" width="36" height="12" rx="6" fill="url(#pin)"/>
+    <path d="M53 58 L63 58 L59.5 92 Q58 96 56.5 92 Z" fill="#ffd9c4"/>
+    <!-- highlight -->
+    <rect x="49" y="26.5" width="9" height="4" rx="2" fill="#ffffff" opacity="0.55"/>
+  </g>
+
+  <!-- magic sparkles -->
+  <g fill="#ffd9a0">
+    <path d="M97 26 Q99 36 109 38 Q99 40 97 50 Q95 40 85 38 Q95 36 97 26 Z"/>
+    <path d="M108 58 Q109 63 114 64 Q109 65 108 70 Q107 65 102 64 Q107 63 108 58 Z" opacity="0.85"/>
+  </g>
+</svg>

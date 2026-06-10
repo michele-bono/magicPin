@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "magicPin",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Save each device's pinned tabs to your Firefox Account and restore any device's set with one click.",
   "permissions": [
     "tabs",
@@ -17,7 +17,8 @@
   },
   "action": {
     "default_title": "magicPin",
-    "default_popup": "src/popup/popup.html"
+    "default_popup": "src/popup/popup.html",
+    "default_icon": "icons/magicpin.svg"
   },
   "browser_specific_settings": {
     "gecko": {
@@ -37,5 +38,12 @@
       },
       "description": "Open the magicPin popup"
     }
+  },
+  "icons": {
+    "16": "icons/magicpin.svg",
+    "32": "icons/magicpin.svg",
+    "48": "icons/magicpin.svg",
+    "96": "icons/magicpin.svg",
+    "128": "icons/magicpin.svg"
   }
 }
