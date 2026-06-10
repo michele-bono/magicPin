@@ -10,6 +10,12 @@ const MAX_NAME = 40;
 const MAX_URL = 2000;
 const MAX_TITLE = 300;
 
+// Malformed records (e.g. written by a future schema) are skipped: a backup
+// this function produces must always be re-importable.
+const exportable = ([, r]) =>
+  r && typeof r.name === "string" && Array.isArray(r.pins) &&
+  r.pins.every((p) => p && typeof p.url === "string");
+
 export function buildExport({ devices = {}, snapshots = {} } = {}, exportedAt) {
   const toSet = (kind) => ([, record]) => ({
     kind,
@@ -21,8 +27,8 @@ export function buildExport({ devices = {}, snapshots = {} } = {}, exportedAt) {
     magicPin: FORMAT_VERSION,
     exportedAt,
     sets: [
-      ...Object.entries(devices).map(toSet("device")),
-      ...Object.entries(snapshots).map(toSet("snapshot")),
+      ...Object.entries(devices).filter(exportable).map(toSet("device")),
+      ...Object.entries(snapshots).filter(exportable).map(toSet("snapshot")),
     ],
   };
 }

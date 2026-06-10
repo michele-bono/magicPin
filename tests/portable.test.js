@@ -66,3 +66,17 @@ describe("parseImport rejection", () => {
     expect(set.pins).toEqual([{ url: "https://a.test/", title: "" }]);
   });
 });
+
+describe("buildExport robustness", () => {
+  it("skips malformed records so its output always re-imports", () => {
+    const devices = {
+      good: { name: "OK", updatedAt: 1, pins: [pin("https://a.test/")] },
+      noPins: { name: "Broken", updatedAt: 1 },
+      nullRec: null,
+      badPin: { name: "BadPin", updatedAt: 1, pins: [null] },
+    };
+    const out = buildExport({ devices }, 1);
+    expect(out.sets.map((s) => s.name)).toEqual(["OK"]);
+    expect(() => parseImport(JSON.stringify(out))).not.toThrow();
+  });
+});

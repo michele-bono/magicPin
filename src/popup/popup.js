@@ -1,5 +1,5 @@
 import { planReplace } from "../background/pins.js";
-import { buildExport, parseImport } from "../background/portable.js";
+import { parseImport } from "../background/portable.js";
 
 function safeHost(url) {
   try {
@@ -44,12 +44,16 @@ async function localPinnedTabs() {
 // previewing its consequences ("Sure? +3 −2") while armed.
 let armedKey = null;
 let armedPreview = "";
+// Parse errors never reach the background, so they'd be wiped by the next
+// storage-driven re-render; keep them popup-local and prefer them in render.
+let parseError = null;
 let busy = false;
 // Expanded/collapsed choices survive the frequent storage-driven re-renders.
 const openState = new Map();
 
 async function runAction(msg) {
   armedKey = null; // any action settles a pending Replace confirmation
+  parseError = null;
   busy = true;
   render().catch(logError);
   try {
@@ -269,9 +273,14 @@ async function render() {
     : "Nothing saved yet";
 
   const errorLine = document.getElementById("error");
-  errorLine.hidden = !lastError;
-  if (lastError) {
-    errorLine.textContent = `⚠ ${lastError.message} (${relativeTime(lastError.at)})`;
+  if (parseError) {
+    errorLine.hidden = false;
+    errorLine.textContent = `⚠ ${parseError}`;
+  } else {
+    errorLine.hidden = !lastError;
+    if (lastError) {
+      errorLine.textContent = `⚠ ${lastError.message} (${relativeTime(lastError.at)})`;
+    }
   }
 
   renderQuota(all).catch(logError);
@@ -284,8 +293,9 @@ async function renderQuota(all) {
   } catch {
     bytes = new TextEncoder().encode(JSON.stringify(all)).length; // estimate
   }
+  const quotaKb = (browser.storage.sync.QUOTA_BYTES ?? 102400) / 1024;
   document.getElementById("quota").textContent =
-    `Sync storage: ${(bytes / 1024).toFixed(1)} / 100 KB`;
+    `Sync storage: ${(bytes / 1024).toFixed(1)} / ${Math.round(quotaKb)} KB`;
 }
 
 document.getElementById("pause").addEventListener("change", async (e) => {
@@ -312,24 +322,10 @@ document.getElementById("snapsave").addEventListener("click", async () => {
 
 document.getElementById("undo").addEventListener("click", () => runAction({ type: "undo" }));
 
-document.getElementById("export").addEventListener("click", async () => {
-  try {
-    const all = await browser.storage.sync.get(null);
-    const pick = (prefix) =>
-      Object.fromEntries(
-        Object.keys(all)
-          .filter((k) => k.startsWith(prefix))
-          .map((k) => [k.slice(prefix.length), all[k]])
-      );
-    const data = buildExport({ devices: pick("device:"), snapshots: pick("snapshot:") }, Date.now());
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
-    a.download = `magicpin-backup-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
-  } catch (e) {
-    logError(e);
-  }
+// The background owns the download: a blob URL minted here would die with
+// the popup document and could kill the download mid-flight.
+document.getElementById("export").addEventListener("click", () => {
+  send({ type: "export" }).catch(logError);
 });
 
 document.getElementById("import").addEventListener("click", () => {
@@ -340,14 +336,13 @@ document.getElementById("importfile").addEventListener("change", async (e) => {
   const file = e.target.files?.[0];
   e.target.value = "";
   if (!file) return;
+  parseError = null;
   try {
     const sets = parseImport(await file.text());
     await runAction({ type: "import", sets });
   } catch (err) {
-    // Parse errors never reach the background; show them directly.
-    const errorLine = document.getElementById("error");
-    errorLine.hidden = false;
-    errorLine.textContent = `⚠ Import failed: ${err.message}`;
+    parseError = `Import failed: ${err.message}`;
+    render().catch(logError);
   }
 });
 

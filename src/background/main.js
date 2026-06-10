@@ -1,4 +1,5 @@
 import { serializePins, pinsEqual, planReplace, planMerge } from "./pins.js";
+import { buildExport } from "./portable.js";
 import { applyReplace, isEcho } from "./tabsync.js";
 import * as store from "./store.js";
 import { debounce } from "./util.js";
@@ -167,6 +168,7 @@ const saveSnapshot = serialize(async (name) => {
 const deleteSnapshot = serialize(async (snapshotId) => {
   try {
     await store.removeSnapshot(snapshotId);
+    await clearError();
   } catch (e) {
     console.error("magicPin: delete snapshot failed", e);
     await reportError(`Delete failed: ${e.message}`);
@@ -192,6 +194,7 @@ const forgetDevice = serialize(async (deviceId) => {
     const { deviceId: own } = await store.getDeviceIdentity();
     if (deviceId === own) return; // own record is recreated by export anyway
     await store.removeDevice(deviceId);
+    await clearError();
   } catch (e) {
     console.error("magicPin: forget failed", e);
     await reportError(`Forget failed: ${e.message}`);
@@ -215,6 +218,7 @@ const importSets = serialize(async (sets) => {
       }
       const pins = set.pins
         .filter((p) => p && typeof p.url === "string" && p.url)
+        .slice(0, 200)
         .map((p) => ({
           url: p.url.slice(0, 2000),
           title: typeof p.title === "string" ? p.title.slice(0, 300) : "",
@@ -233,6 +237,32 @@ const importSets = serialize(async (sets) => {
   } catch (e) {
     console.error("magicPin: import failed", e);
     await reportError(`Import failed: ${e.message}`);
+  }
+});
+
+// ---------- backup export ----------
+// Runs here, not in the popup: a blob URL minted by the popup dies with the
+// popup document, which can kill the download mid-flight.
+
+const exportBackup = serialize(async () => {
+  try {
+    const data = buildExport(
+      { devices: await store.readDevices(), snapshots: await store.readSnapshots() },
+      Date.now()
+    );
+    const url = URL.createObjectURL(
+      new Blob([JSON.stringify(data, null, 2)], { type: "application/json" })
+    );
+    const filename = `magicpin-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    await browser.downloads.download({ url, filename, saveAs: true });
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    await clearError();
+  } catch (e) {
+    // Cancelling the save dialog rejects too; don't treat that as an error.
+    if (!/canceled/i.test(String(e?.message))) {
+      console.error("magicPin: export failed", e);
+      await reportError(`Export failed: ${e.message}`);
+    }
   }
 });
 
@@ -273,6 +303,7 @@ browser.runtime.onMessage.addListener((msg) => {
   if (msg?.type === "addPin") return addPin(msg.pin);
   if (msg?.type === "snapshot") return saveSnapshot(msg.name);
   if (msg?.type === "import") return importSets(msg.sets);
+  if (msg?.type === "export") return exportBackup();
   if (msg?.type === "deleteSnapshot") return deleteSnapshot(msg.id);
   if (msg?.type === "rename") return renameDevice(msg.name);
   if (msg?.type === "forget") return forgetDevice(msg.deviceId);
