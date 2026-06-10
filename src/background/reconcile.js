@@ -57,7 +57,9 @@ export function computeDiff({ remote, localTabs, snapshot, tabMap }) {
 }
 
 // Global pin order from local tabs: by window, then left-to-right tab index.
+// tabMap: { [tabId]: pinId }
 export function computeLocalOrder(localTabs, tabMap) {
+  if (!localTabs?.length) return [];
   return [...localTabs]
     .sort((a, b) => a.windowId - b.windowId || a.index - b.index)
     .map((t) => tabMap[t.tabId])
@@ -66,6 +68,7 @@ export function computeLocalOrder(localTabs, tabMap) {
 
 // Merge-on-write: build url updates ONLY for pins this device navigated,
 // so a stale device never clobbers another device's fresher urls.
+// Assumes tabMap is injective (one tabId per pinId), which computeDiff guarantees.
 export function navUpdates({ navigatedPinIds, tabMap, localTabs, remotePins, now }) {
   const pinToTab = {};
   for (const [tabId, pinId] of Object.entries(tabMap)) pinToTab[pinId] = Number(tabId);

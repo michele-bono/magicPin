@@ -142,6 +142,12 @@ describe("computeLocalOrder", () => {
     const order = computeLocalOrder(tabs, { 1: "pa", 2: "pb", 3: "pc" });
     expect(order).toEqual(["pc", "pb", "pa"]);
   });
+
+  it("returns [] for empty input and for fully unmapped tabs", () => {
+    expect(computeLocalOrder([], { 1: "pa" })).toEqual([]);
+    expect(computeLocalOrder(undefined, {})).toEqual([]);
+    expect(computeLocalOrder([tab(1, "https://a.test/")], {})).toEqual([]);
+  });
 });
 
 describe("navUpdates (merge-on-write)", () => {
@@ -171,5 +177,24 @@ describe("navUpdates (merge-on-write)", () => {
       now: 99,
     });
     expect(set).toEqual({});
+  });
+
+  it("returns updates for multiple navigated pins at once", () => {
+    const remotePins = { a: pin("https://a.test/old"), b: pin("https://b.test/old") };
+    const localTabs = [
+      tab(1, "https://a.test/new", { title: "A" }),
+      tab(2, "https://b.test/new", { title: "B" }),
+    ];
+    const set = navUpdates({
+      navigatedPinIds: ["a", "b"],
+      tabMap: { 1: "a", 2: "b" },
+      localTabs,
+      remotePins,
+      now: 99,
+    });
+    expect(set).toEqual({
+      a: { url: "https://a.test/new", title: "A", updatedAt: 99 },
+      b: { url: "https://b.test/new", title: "B", updatedAt: 99 },
+    });
   });
 });
