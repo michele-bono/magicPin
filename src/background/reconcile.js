@@ -31,6 +31,7 @@ export function computeDiff({ remote, localTabs, snapshot, tabMap }) {
     }
   }
 
+  // Deletion detection (close) is driven by the last-applied snapshot; see next task.
   const close = [];
   const upload = [];
   for (const tab of leftover) {
