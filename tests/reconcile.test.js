@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeDiff, computeLocalOrder, navUpdates, dedupeRemotePins } from "../src/background/reconcile.js";
+import { computeDiff, computeLocalOrder, navUpdates, dedupeRemotePins, carrySnapshot } from "../src/background/reconcile.js";
 
 export const pin = (url, title = "t") => ({ url, title, updatedAt: 1 });
 export const tab = (tabId, url, { index = 0, windowId = 1, title = "t", cookieStoreId } = {}) => ({
@@ -269,6 +269,40 @@ describe("container identity", () => {
     expect(diff.upload).toEqual([]);
   });
 
+  it("keeps both container pins mapped and closes nothing (regression)", () => {
+    const a = inContainer(pin("https://mail.test/"), "firefox-container-1");
+    const b = inContainer(pin("https://mail.test/"), "firefox-container-2");
+    const remote = { pins: { a, b }, order: ["a", "b"] };
+    const snapshot = { pins: { a, b }, order: ["a", "b"] };
+    const localTabs = [
+      tab(1, "https://mail.test/", { cookieStoreId: "firefox-container-1" }),
+      tab(2, "https://mail.test/", { cookieStoreId: "firefox-container-2" }),
+    ];
+    expect(dedupeRemotePins(remote.pins)).toEqual([]);
+    const diff = computeDiff({ remote, localTabs, snapshot, tabMap: { 1: "a", 2: "b" } });
+    expect(diff.close).toEqual([]);
+    expect(diff.upload).toEqual([]);
+    expect(diff.create).toEqual([]);
+    expect(diff.map).toEqual({ 1: "a", 2: "b" });
+  });
+
+  it("does not match a legacy default-container record to a container tab", () => {
+    const remote = { pins: { a: pin("https://a.test/") }, order: ["a"] };
+    const localTabs = [tab(7, "https://a.test/", { cookieStoreId: "firefox-container-1" })];
+    const diff = computeDiff({ remote, localTabs, snapshot: empty, tabMap: {} });
+    expect(diff.map).toEqual({});
+    expect(diff.create).toHaveLength(1);
+    expect(diff.upload).toEqual([
+      { tabId: 7, url: "https://a.test/", title: "t", cookieStoreId: "firefox-container-1" },
+    ]);
+  });
+
+  it("omits cookieStoreId for default-container uploads", () => {
+    const localTabs = [tab(7, "https://a.test/", { cookieStoreId: "firefox-default" })];
+    const diff = computeDiff({ remote: empty, localTabs, snapshot: empty, tabMap: {} });
+    expect(diff.upload).toEqual([{ tabId: 7, url: "https://a.test/", title: "t" }]);
+  });
+
   it("navUpdates preserves the pin's container", () => {
     const remotePins = { a: inContainer(pin("https://a.test/old"), "firefox-container-1") };
     const set = navUpdates({
@@ -286,5 +320,30 @@ describe("container identity", () => {
         cookieStoreId: "firefox-container-1",
       },
     });
+  });
+});
+
+describe("carrySnapshot (manual-apply bookkeeping)", () => {
+  it("keeps remotely-deleted pins whose tabs are still open (pending removal)", () => {
+    const snapshot = { pins: { x: pin("https://x.test/") }, order: ["x"] };
+    const remote = { pins: {}, order: [] };
+    const next = carrySnapshot({ snapshot, remote, uploaded: {}, tabMap: { 7: "x" } });
+    expect(next.pins).toEqual({ x: pin("https://x.test/") });
+  });
+
+  it("drops deleted pins nothing references anymore", () => {
+    const snapshot = { pins: { x: pin("https://x.test/") }, order: ["x"] };
+    const remote = { pins: {}, order: [] };
+    const next = carrySnapshot({ snapshot, remote, uploaded: {}, tabMap: {} });
+    expect(next.pins).toEqual({});
+  });
+
+  it("merges remote pins and fresh uploads, preferring remote values", () => {
+    const snapshot = { pins: { a: pin("https://a.test/old") }, order: ["a"] };
+    const remote = { pins: { a: pin("https://a.test/new") }, order: ["a"] };
+    const uploaded = { u: pin("https://u.test/") };
+    const next = carrySnapshot({ snapshot, remote, uploaded, tabMap: { 1: "a", 2: "u" } });
+    expect(next.pins).toEqual({ a: pin("https://a.test/new"), u: pin("https://u.test/") });
+    expect(next.order).toEqual(["a"]);
   });
 });

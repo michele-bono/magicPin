@@ -20,14 +20,29 @@ export async function writePins({ set = {}, remove = [], order } = {}) {
   if (remove.length) await browser.storage.sync.remove(remove.map((id) => PIN_PREFIX + id));
 }
 
+// v2 = pin records may carry cookieStoreId (container identity).
+const SCHEMA_VERSION = 2;
+
 export async function ensureSchema() {
   const { meta } = await browser.storage.sync.get("meta");
   if (!meta) {
     await browser.storage.sync.set({ meta: { schemaVersion: 1 } });
     return;
   }
-  if (meta.schemaVersion > 1) {
+  if (meta.schemaVersion > SCHEMA_VERSION) {
     throw new Error(`magicPin: unsupported schema v${meta.schemaVersion}`);
+  }
+}
+
+// Container records are a v2 concept. Stamping v2 fences off devices still
+// running the v1 extension (their ensureSchema throws -> error badge, syncing
+// stops) so their URL-only dedupe can't destroy container pins. Called lazily,
+// only when the first container record is written: container-free users keep
+// their old devices syncing.
+export async function ensureContainerSchema() {
+  const { meta } = await browser.storage.sync.get("meta");
+  if ((meta?.schemaVersion ?? 1) < 2) {
+    await browser.storage.sync.set({ meta: { schemaVersion: 2 } });
   }
 }
 

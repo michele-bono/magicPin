@@ -1,4 +1,11 @@
-import { computeDiff, computeLocalOrder, navUpdates, dedupeRemotePins } from "./reconcile.js";
+import {
+  computeDiff,
+  computeLocalOrder,
+  navUpdates,
+  dedupeRemotePins,
+  containerField,
+  carrySnapshot,
+} from "./reconcile.js";
 import { applyDiff, isEcho } from "./tabsync.js";
 import * as store from "./store.js";
 import { debounce } from "./util.js";
@@ -68,17 +75,22 @@ async function adoptPersistedAssociations(localTabs, tabMap, remotePins) {
   }
 }
 
-// ---------- reconcile (remote -> local, plus first-run/offline uploads) ----------
+// ---------- reconcile ----------
+// Two modes share one body. The AUTO mode (every sync/focus/startup trigger)
+// only pushes local state up: it uploads new local pins and refreshes the
+// mappings, but never creates, closes, or moves a tab. The APPLY mode runs
+// only from the popup's "Replace pinned tabs" button and makes local pinned
+// tabs match the synced set exactly (create + close + reorder).
 
-const reconcile = serialize(async () => {
+const runReconcile = async ({ apply }) => {
   try {
     if (await store.readPaused()) return;
     await store.ensureSchema();
 
     let remote = await store.readRemote();
 
-    // Converge concurrent first-run uploads: identical-URL pins collapse to
-    // the same survivor on every device.
+    // Converge concurrent first-run uploads: identical (url, container) pins
+    // collapse to the same survivor on every device.
     const dupIds = dedupeRemotePins(remote.pins);
     if (dupIds.length) {
       await store.writePins({
@@ -95,34 +107,43 @@ const reconcile = serialize(async () => {
     await adoptPersistedAssociations(localTabs, tabMap, remote.pins);
 
     const diff = computeDiff({ remote, localTabs, snapshot, tabMap });
-    let map = await applyDiff(diff);
+    let map = { ...diff.map };
+    if (apply) {
+      map = await applyDiff(diff);
+    } else {
+      // Keep mappings for pending-removal tabs (pin deleted remotely, tab
+      // still open here): losing them would make the next pass re-upload the
+      // tab and resurrect the deletion.
+      for (const tabId of diff.close) {
+        if (tabMap[tabId]) map[tabId] = tabMap[tabId];
+      }
+    }
 
     // Upload locally-new pins (first run, offline-created, fresh pin events).
     // A pin-then-quick-unpin inside the debounce window may still upload and
     // be re-created once; sub-second window, recoverable by closing the tab.
-    const pins = { ...remote.pins };
+    const uploaded = {};
     const order = [...diff.order];
     if (diff.upload.length) {
-      const set = {};
       for (const u of diff.upload) {
         const id = crypto.randomUUID();
-        set[id] = {
+        uploaded[id] = {
           url: u.url,
           title: u.title,
           updatedAt: Date.now(),
-          ...(u.cookieStoreId && u.cookieStoreId !== "firefox-default"
-            ? { cookieStoreId: u.cookieStoreId }
-            : {}),
+          ...containerField(u),
         };
-        pins[id] = set[id];
         order.push(id);
         map[u.tabId] = id;
       }
-      await store.writePins({ set, order });
+      if (Object.values(uploaded).some((p) => p.cookieStoreId)) {
+        await store.ensureContainerSchema();
+      }
+      await store.writePins({ set: uploaded, order });
       await store.writeLastSync(Date.now());
     }
 
-    // Drop map entries for tabs that no longer exist (incl. ones we just closed).
+    // Drop map entries for tabs that no longer exist (incl. ones apply closed).
     const live = new Set((await getLocalPinnedTabs()).map((t) => t.tabId));
     map = Object.fromEntries(
       Object.entries(map).filter(([tabId]) => live.has(Number(tabId)))
@@ -130,13 +151,22 @@ const reconcile = serialize(async () => {
 
     await store.writeTabMap(map);
     await persistAssociations(map);
-    await store.writeSnapshot({ pins, order });
+    if (apply) {
+      // Everything was applied: the snapshot IS the synced state.
+      await store.writeSnapshot({ pins: { ...remote.pins, ...uploaded }, order });
+    } else {
+      // Acknowledge uploads, keep pending removals alive until the user applies.
+      await store.writeSnapshot(carrySnapshot({ snapshot, remote, uploaded, tabMap: map }));
+    }
     await clearErrorBadge();
   } catch (e) {
     console.error("magicPin: reconcile failed", e);
     await setErrorBadge();
   }
-});
+};
+
+const reconcile = serialize(() => runReconcile({ apply: false }));
+const applySyncedPins = serialize(() => runReconcile({ apply: true }));
 
 const scheduleReconcile = debounce(reconcile, 500);
 
@@ -274,6 +304,8 @@ browser.tabs.onAttached.addListener((tabId) => {
 
 browser.runtime.onMessage.addListener((msg) => {
   if (msg?.type === "unpause") scheduleReconcile();
+  // Returning the promise makes the popup's sendMessage resolve on completion.
+  if (msg?.type === "apply") return applySyncedPins();
 });
 
 browser.storage.onChanged.addListener((changes, area) => {

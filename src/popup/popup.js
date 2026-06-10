@@ -11,6 +11,7 @@ async function render() {
   const { paused, lastSync } = await browser.storage.local.get(["paused", "lastSync"]);
 
   document.getElementById("pause").checked = Boolean(paused);
+  document.getElementById("apply").disabled = Boolean(paused);
 
   const order = Array.isArray(all.order) ? all.order : [];
   const pins = Object.keys(all)
@@ -45,11 +46,27 @@ async function render() {
 
 document.getElementById("pause").addEventListener("change", async (e) => {
   await browser.storage.local.set({ paused: e.target.checked });
+  document.getElementById("apply").disabled = e.target.checked;
   if (!e.target.checked) {
-    // Kick the background so unpausing catches up immediately instead of
-    // waiting for the next sync/focus event.
+    // Kick the background so unpausing uploads local changes immediately
+    // instead of waiting for the next sync/focus event.
     browser.runtime.sendMessage({ type: "unpause" }).catch(() => {});
   }
+});
+
+// Importing is manual: this replaces the pinned tabs on THIS device with the
+// synced set (creates missing pins, closes removed ones, matches the order).
+document.getElementById("apply").addEventListener("click", () => {
+  const button = document.getElementById("apply");
+  button.disabled = true;
+  button.textContent = "Replacing…";
+  browser.runtime
+    .sendMessage({ type: "apply" })
+    .catch((e) => console.error("magicPin popup:", e))
+    .finally(() => {
+      button.disabled = false;
+      button.textContent = "Replace pinned tabs with synced set";
+    });
 });
 
 // Re-render while open so incoming syncs and lastSync stay current.

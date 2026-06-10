@@ -28,11 +28,21 @@ describe("store", () => {
     expect(await store.readPaused()).toBe(false);
   });
 
-  it("ensureSchema stamps v1 and rejects newer versions", async () => {
+  it("ensureSchema stamps v1, accepts v2, rejects newer versions", async () => {
     await store.ensureSchema();
     expect(globalThis.browser.storage.sync._data.meta).toEqual({ schemaVersion: 1 });
     await globalThis.browser.storage.sync.set({ meta: { schemaVersion: 2 } });
+    await expect(store.ensureSchema()).resolves.toBeUndefined();
+    await globalThis.browser.storage.sync.set({ meta: { schemaVersion: 3 } });
     await expect(store.ensureSchema()).rejects.toThrow(/unsupported/);
+  });
+
+  it("ensureContainerSchema bumps to v2 once and is idempotent", async () => {
+    await store.ensureSchema();
+    await store.ensureContainerSchema();
+    expect(globalThis.browser.storage.sync._data.meta).toEqual({ schemaVersion: 2 });
+    await store.ensureContainerSchema();
+    expect(globalThis.browser.storage.sync._data.meta).toEqual({ schemaVersion: 2 });
   });
 
   it("round-trips snapshot through local storage", async () => {

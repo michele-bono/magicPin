@@ -6,7 +6,7 @@
 const containerOf = (x) => x.cookieStoreId ?? "firefox-default";
 const sameIdentity = (a, b) => a.url === b.url && containerOf(a) === containerOf(b);
 // Spread helper: only non-default containers are stored on records.
-const containerField = (x) =>
+export const containerField = (x) =>
   x.cookieStoreId && x.cookieStoreId !== "firefox-default"
     ? { cookieStoreId: x.cookieStoreId }
     : {};
@@ -116,4 +116,21 @@ export function navUpdates({ navigatedPinIds, tabMap, localTabs, remotePins, now
     set[pinId] = { url: tab.url, title: tab.title, updatedAt: now, ...containerField(existing) };
   }
   return set;
+}
+
+// Manual-apply bookkeeping: the snapshot tracks pins this device has
+// ACKNOWLEDGED (applied or uploaded), not just the latest remote state.
+// A pin deleted remotely but still open locally stays in the snapshot as a
+// "pending removal" until the user applies — so the auto path neither closes
+// the tab (apply is manual) nor re-uploads it (which would resurrect the
+// deletion). Deleted pins nothing references anymore are garbage-collected.
+export function carrySnapshot({ snapshot, remote, uploaded, tabMap }) {
+  const remotePins = remote.pins ?? {};
+  const referenced = new Set(Object.values(tabMap ?? {}));
+  const pins = {};
+  for (const [id, p] of Object.entries(snapshot.pins ?? {})) {
+    if (!remotePins[id] && referenced.has(id)) pins[id] = p; // pending removal
+  }
+  Object.assign(pins, remotePins, uploaded ?? {});
+  return { pins, order: remote.order ?? [] };
 }
