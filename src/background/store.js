@@ -6,9 +6,12 @@ export async function readRemote() {
   for (const [key, value] of Object.entries(all)) {
     if (key.startsWith(PIN_PREFIX)) pins[key.slice(PIN_PREFIX.length)] = value;
   }
-  return { pins, order: all.order ?? [] };
+  return { pins, order: Array.isArray(all.order) ? all.order : [] };
 }
 
+// Callers must not pass the same id in both `set` and `remove` (remove wins).
+// The set and remove storage calls are intentionally separate (storage.sync has
+// no transactions); if interrupted, stale pin keys linger until a later write.
 export async function writePins({ set = {}, remove = [], order } = {}) {
   const toSet = {};
   for (const [id, pin] of Object.entries(set)) toSet[PIN_PREFIX + id] = pin;

@@ -34,4 +34,27 @@ describe("store", () => {
     await globalThis.browser.storage.sync.set({ meta: { schemaVersion: 2 } });
     await expect(store.ensureSchema()).rejects.toThrow(/unsupported/);
   });
+
+  it("round-trips snapshot through local storage", async () => {
+    const snap = { pins: { a: pinA }, order: ["a"] };
+    await store.writeSnapshot(snap);
+    expect(await store.readSnapshot()).toEqual(snap);
+    expect(globalThis.browser.storage.local._data.snapshot).toEqual(snap);
+  });
+
+  it("round-trips tabMap through session storage", async () => {
+    await store.writeTabMap({ 7: "pin-a" });
+    expect(await store.readTabMap()).toEqual({ 7: "pin-a" });
+    expect(globalThis.browser.storage.session._data.tabMap).toEqual({ 7: "pin-a" });
+  });
+
+  it("writeLastSync persists to local storage", async () => {
+    await store.writeLastSync(12345);
+    expect(globalThis.browser.storage.local._data.lastSync).toBe(12345);
+  });
+
+  it("readRemote tolerates a corrupted order value", async () => {
+    await globalThis.browser.storage.sync.set({ "pin:a": pinA, order: "garbage" });
+    expect(await store.readRemote()).toEqual({ pins: { a: pinA }, order: [] });
+  });
 });
