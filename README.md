@@ -38,9 +38,16 @@ minutes; immediately on browser startup/focus in practice).
 - Pin deletions are propagated from live unpin/close events; a deletion that
   happens while the extension is not running is re-created rather than lost
   (the design errs on the side of never losing a pin).
-- Two pinned tabs with the same URL collapse into one synced pin: identical
-  URLs are how concurrent first-run uploads from different devices are
-  deduplicated, and that rule can't tell an intentional duplicate apart.
+- Two pinned tabs with the same URL **in the same container** collapse into
+  one synced pin: identical URLs are how concurrent first-run uploads from
+  different devices are deduplicated, and that rule can't tell an intentional
+  duplicate apart. The same URL in different Firefox containers is treated as
+  distinct pins and syncs fine.
+- Container pins are recreated in the same container on other devices. If a
+  (custom) container doesn't exist on a device, that pin is skipped there —
+  Firefox's four built-in containers always match across devices, but
+  user-created containers don't share IDs unless a container-sync add-on is
+  used.
 
 ## Development
 

@@ -37,10 +37,10 @@ export async function applyDiff(diff) {
     if (windowId === null) {
       console.warn("magicPin: no normal window available; skipping", diff.create.length, "create(s)");
     } else {
-      for (const { pinId, url, title } of diff.create) {
+      for (const { pinId, url, title, cookieStoreId } of diff.create) {
         if (failedCreates.get(pinId) === url) continue;
         try {
-          const tab = await createPinnedTab(windowId, url, title);
+          const tab = await createPinnedTab(windowId, url, title, cookieStoreId);
           markEcho(tab.id);
           map[tab.id] = pinId;
           failedCreates.delete(pinId);
@@ -57,8 +57,12 @@ export async function applyDiff(diff) {
   return map;
 }
 
-async function createPinnedTab(windowId, url, title) {
+async function createPinnedTab(windowId, url, title, cookieStoreId) {
   const base = { windowId, url, pinned: true, active: false };
+  // Recreate the pin in its container. If the container doesn't exist on this
+  // device, creation fails and the pin is skipped (failedCreates) — safer than
+  // silently opening a container pin in the default container.
+  if (cookieStoreId) base.cookieStoreId = cookieStoreId;
   try {
     // discarded:true = lazy tab; N incoming pins don't trigger N page loads.
     return await browser.tabs.create({ ...base, discarded: true, title });

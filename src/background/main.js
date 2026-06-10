@@ -15,6 +15,7 @@ async function getLocalPinnedTabs() {
       title: t.title ?? "",
       index: t.index,
       windowId: t.windowId,
+      cookieStoreId: t.cookieStoreId,
     }));
 }
 
@@ -105,7 +106,14 @@ const reconcile = serialize(async () => {
       const set = {};
       for (const u of diff.upload) {
         const id = crypto.randomUUID();
-        set[id] = { url: u.url, title: u.title, updatedAt: Date.now() };
+        set[id] = {
+          url: u.url,
+          title: u.title,
+          updatedAt: Date.now(),
+          ...(u.cookieStoreId && u.cookieStoreId !== "firefox-default"
+            ? { cookieStoreId: u.cookieStoreId }
+            : {}),
+        };
         pins[id] = set[id];
         order.push(id);
         map[u.tabId] = id;

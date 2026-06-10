@@ -2,12 +2,13 @@ import { describe, it, expect } from "vitest";
 import { computeDiff, computeLocalOrder, navUpdates, dedupeRemotePins } from "../src/background/reconcile.js";
 
 export const pin = (url, title = "t") => ({ url, title, updatedAt: 1 });
-export const tab = (tabId, url, { index = 0, windowId = 1, title = "t" } = {}) => ({
+export const tab = (tabId, url, { index = 0, windowId = 1, title = "t", cookieStoreId } = {}) => ({
   tabId,
   url,
   title,
   index,
   windowId,
+  ...(cookieStoreId ? { cookieStoreId } : {}),
 });
 export const empty = { pins: {}, order: [] };
 
@@ -222,5 +223,68 @@ describe("dedupeRemotePins", () => {
       b: pin("https://x.test/"),
     };
     expect(dedupeRemotePins(pins).sort()).toEqual(["b", "c"]);
+  });
+});
+
+describe("container identity", () => {
+  const inContainer = (p, cookieStoreId) => ({ ...p, cookieStoreId });
+
+  it("does not dedupe same-url pins in different containers", () => {
+    const pins = {
+      a: inContainer(pin("https://mail.test/"), "firefox-container-1"),
+      b: inContainer(pin("https://mail.test/"), "firefox-container-2"),
+    };
+    expect(dedupeRemotePins(pins)).toEqual([]);
+  });
+
+  it("still dedupes same-url pins in the same container", () => {
+    const pins = {
+      b: inContainer(pin("https://mail.test/"), "firefox-container-1"),
+      a: inContainer(pin("https://mail.test/"), "firefox-container-1"),
+    };
+    expect(dedupeRemotePins(pins)).toEqual(["b"]);
+  });
+
+  it("pass-2 matching does not cross containers", () => {
+    const remote = {
+      pins: { a: inContainer(pin("https://mail.test/"), "firefox-container-1") },
+      order: ["a"],
+    };
+    const localTabs = [tab(7, "https://mail.test/", { cookieStoreId: "firefox-container-2" })];
+    const diff = computeDiff({ remote, localTabs, snapshot: empty, tabMap: {} });
+    expect(diff.map).toEqual({});
+    expect(diff.upload).toEqual([
+      { tabId: 7, url: "https://mail.test/", title: "t", cookieStoreId: "firefox-container-2" },
+    ]);
+    expect(diff.create).toEqual([
+      { pinId: "a", url: "https://mail.test/", title: "t", cookieStoreId: "firefox-container-1" },
+    ]);
+  });
+
+  it("treats missing cookieStoreId as the default container", () => {
+    const remote = { pins: { a: pin("https://a.test/") }, order: ["a"] };
+    const localTabs = [tab(7, "https://a.test/", { cookieStoreId: "firefox-default" })];
+    const diff = computeDiff({ remote, localTabs, snapshot: empty, tabMap: {} });
+    expect(diff.map).toEqual({ 7: "a" });
+    expect(diff.upload).toEqual([]);
+  });
+
+  it("navUpdates preserves the pin's container", () => {
+    const remotePins = { a: inContainer(pin("https://a.test/old"), "firefox-container-1") };
+    const set = navUpdates({
+      navigatedPinIds: ["a"],
+      tabMap: { 1: "a" },
+      localTabs: [tab(1, "https://a.test/new", { title: "A" })],
+      remotePins,
+      now: 99,
+    });
+    expect(set).toEqual({
+      a: {
+        url: "https://a.test/new",
+        title: "A",
+        updatedAt: 99,
+        cookieStoreId: "firefox-container-1",
+      },
+    });
   });
 });

@@ -1,5 +1,16 @@
 // Pure diff/merge logic. No browser API access — keep it unit-testable.
 
+// Pin identity is (url, container): the same URL pinned in two Firefox
+// containers is two distinct pins. Records without cookieStoreId (pre-container
+// schema) mean the default container.
+const containerOf = (x) => x.cookieStoreId ?? "firefox-default";
+const sameIdentity = (a, b) => a.url === b.url && containerOf(a) === containerOf(b);
+// Spread helper: only non-default containers are stored on records.
+const containerField = (x) =>
+  x.cookieStoreId && x.cookieStoreId !== "firefox-default"
+    ? { cookieStoreId: x.cookieStoreId }
+    : {};
+
 export function computeDiff({ remote, localTabs, snapshot, tabMap }) {
   const remotePins = remote.pins ?? {};
   const snapshotPins = snapshot.pins ?? {};
@@ -19,11 +30,11 @@ export function computeDiff({ remote, localTabs, snapshot, tabMap }) {
     }
   }
 
-  // Pass 2: match by exact URL (covers session restore, fresh installs).
+  // Pass 2: match by identity (covers session restore, fresh installs).
   const leftover = [];
   for (const tab of unmatched) {
     const pinId = Object.keys(remotePins).find(
-      (id) => !matched.has(id) && remotePins[id].url === tab.url
+      (id) => !matched.has(id) && sameIdentity(remotePins[id], tab)
     );
     if (pinId) {
       map[tab.tabId] = pinId;
@@ -43,13 +54,13 @@ export function computeDiff({ remote, localTabs, snapshot, tabMap }) {
       close.push(tab.tabId);
     } else {
       // No mapping, or pin not in snapshot (never synced / stale mapping): upload as new.
-      upload.push({ tabId: tab.tabId, url: tab.url, title: tab.title });
+      upload.push({ tabId: tab.tabId, url: tab.url, title: tab.title, ...containerField(tab) });
     }
   }
 
   const create = Object.entries(remotePins)
     .filter(([id]) => !matched.has(id))
-    .map(([pinId, p]) => ({ pinId, url: p.url, title: p.title }));
+    .map(([pinId, p]) => ({ pinId, url: p.url, title: p.title, ...containerField(p) }));
 
   const order = (remote.order ?? []).filter((id) => remotePins[id]);
 
@@ -66,15 +77,19 @@ export function computeLocalOrder(localTabs, tabMap) {
     .filter(Boolean);
 }
 
-// Collapse remote pins that share a URL — the artifact of two devices
-// concurrently uploading the same pin on first run. Every device keeps the
-// lexicographically smallest id, so they all converge on the same survivor.
-// (Intentionally also collapses user-created same-URL duplicates; v1 trade-off.)
+// Collapse remote pins that share an identity (url + container) — the artifact
+// of two devices concurrently uploading the same pin on first run. Every device
+// keeps the lexicographically smallest id, so they all converge on the same
+// survivor. Same URL in different containers is two distinct pins and is kept.
+// (Intentionally still collapses user-created same-url-same-container
+// duplicates; v1 trade-off.)
 export function dedupeRemotePins(remotePins) {
   const byUrl = new Map();
   for (const [id, p] of Object.entries(remotePins ?? {})) {
-    if (!byUrl.has(p.url)) byUrl.set(p.url, []);
-    byUrl.get(p.url).push(id);
+    // URLs cannot contain raw spaces, so "container url" is an unambiguous key.
+    const key = `${containerOf(p)} ${p.url}`;
+    if (!byUrl.has(key)) byUrl.set(key, []);
+    byUrl.get(key).push(id);
   }
   const remove = [];
   for (const ids of byUrl.values()) {
@@ -97,7 +112,8 @@ export function navUpdates({ navigatedPinIds, tabMap, localTabs, remotePins, now
     const tab = tabsById.get(pinToTab[pinId]);
     const existing = remotePins[pinId];
     if (!tab || !existing || existing.url === tab.url) continue;
-    set[pinId] = { url: tab.url, title: tab.title, updatedAt: now };
+    // Carry the pin's container through: a nav update must not strip identity.
+    set[pinId] = { url: tab.url, title: tab.title, updatedAt: now, ...containerField(existing) };
   }
   return set;
 }
