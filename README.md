@@ -57,7 +57,10 @@ minutes; immediately on browser startup/focus in practice).
 - If Firefox Sync is disabled, `storage.sync` silently stays local-only —
   Firefox offers no API to detect this.
 - Privileged pins (`about:*`, `file:*`) can't be recreated by extensions and
-  are skipped during Replace.
+  are skipped during Replace — and since device records and the undo slot
+  always mirror what's actually open, a skipped pin drops out of them. Pins
+  you care about are safest in a named snapshot: snapshots never change on
+  their own.
 - Each device set or snapshot must fit in one sync record (~8 KB ≈ 40+ pins
   depending on URL length), and everything shares Firefox Sync's ~100 KB
   total — roughly a dozen sets/snapshots.

@@ -76,17 +76,20 @@ async function resolvePins(key) {
   return undefined;
 }
 
-// Shared by replace and merge. Saves the pre-mutation state to the undo slot
-// first; since resolvePins("undo") reads before the slot is overwritten, the
-// undo action itself toggles between the two states (undo/redo).
+// Shared by replace and merge. The pre-mutation state goes into the undo slot
+// only AFTER the apply succeeds — if the apply throws, the slot keeps its old
+// content, so a failed undo can be retried instead of destroying its target.
+// Since resolvePins("undo") reads before the slot is rewritten, the undo
+// action itself toggles between the two states (undo/redo).
 async function adoptPins(key, makePlan) {
   try {
     await store.ensureSchema();
     const target = await resolvePins(key);
     if (!target) throw new Error(`unknown source ${key}`);
     const current = await getLocalPinnedTabs();
-    await store.writeUndo({ pins: serializePins(current), savedAt: Date.now() });
+    const before = serializePins(current);
     await applyReplace(makePlan(current, target));
+    await store.writeUndo({ pins: before, savedAt: Date.now() });
     await clearErrorBadge();
   } catch (e) {
     console.error("magicPin: adopt failed", e);
@@ -121,7 +124,10 @@ const saveSnapshot = serialize(async (name) => {
   try {
     await store.ensureSchema();
     const pins = serializePins(await getLocalPinnedTabs());
-    const trimmed = String(name ?? "").trim() || `Snapshot ${new Date().toLocaleDateString()}`;
+    const trimmed =
+      String(name ?? "")
+        .trim()
+        .slice(0, 40) || `Snapshot ${new Date().toLocaleDateString()}`;
     await store.writeSnapshot(crypto.randomUUID(), {
       name: trimmed,
       updatedAt: Date.now(),
@@ -151,7 +157,7 @@ const renameDevice = serialize(async (name) => {
     const trimmed = String(name ?? "").trim();
     if (!trimmed) return;
     await store.setDeviceName(trimmed);
-    await exportNow();
+    await exportNow({ force: true });
   } catch (e) {
     console.error("magicPin: rename failed", e);
     await setErrorBadge();

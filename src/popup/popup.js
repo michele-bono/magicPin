@@ -30,6 +30,7 @@ let busy = false;
 const openState = new Map();
 
 async function runAction(msg) {
+  armedKey = null; // any action settles a pending Replace confirmation
   busy = true;
   render().catch(logError);
   try {
@@ -151,12 +152,14 @@ function sourceSection({ key, record, isOwn, open }) {
     const remove = summaryButton(
       "✕",
       isSnapshot ? "Delete this snapshot" : "Forget this device's saved pins",
-      () =>
+      () => {
+        armedKey = null;
         send(
           isSnapshot
             ? { type: "deleteSnapshot", id: key.slice(9) }
             : { type: "forget", deviceId: key.slice(7) }
-        ).catch(logError)
+        ).catch(logError);
+      }
     );
     remove.classList.add("remove");
     summary.append(remove);
@@ -172,9 +175,15 @@ function groupHeading(text) {
   return h2;
 }
 
-const validRecord = (d) => d && typeof d.name === "string" && Array.isArray(d.pins);
+const validRecord = (d) =>
+  d &&
+  typeof d.name === "string" &&
+  Array.isArray(d.pins) &&
+  d.pins.every((p) => p && typeof p.url === "string");
 
 async function render() {
+  // Don't rebuild the DOM out from under an in-progress device rename.
+  if (document.activeElement?.classList?.contains("source-name")) return;
   const all = await browser.storage.sync.get(null);
   const { paused, lastSync, deviceId: ownId, undo } = await browser.storage.local.get([
     "paused",
