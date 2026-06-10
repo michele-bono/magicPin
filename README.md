@@ -49,6 +49,15 @@ minutes; immediately on browser startup/focus in practice).
 - **Pause** stops this device from saving (per-device). A red `!` badge means
   the last save failed. Explicit actions (Replace/Merge/Undo/+) still save
   their result while paused.
+- **Replace previews its consequences** while armed: "Sure? +3 −2" means 3
+  pins open, 2 close.
+- **Backup beyond Firefox Sync:** "Export backup" downloads every set and
+  snapshot as a JSON file; "Import backup" restores a file's sets as
+  snapshots (non-destructive). Your pins survive profile resets, Sync
+  outages, and even Firefox itself.
+- **Transparent status:** the popup footer shows the last save time, the last
+  error (also signalled by the toolbar badge), and live sync-storage usage
+  ("Sync storage: 12.3 / 100 KB").
 - **Dark mode** follows the system theme; **Ctrl+Alt+P** (configurable in
   about:addons → gear → Manage Extension Shortcuts) opens the popup.
 

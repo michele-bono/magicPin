@@ -1,3 +1,6 @@
+import { planReplace } from "../background/pins.js";
+import { buildExport, parseImport } from "../background/portable.js";
+
 function safeHost(url) {
   try {
     return new URL(url).hostname;
@@ -23,8 +26,24 @@ function logError(e) {
   console.error("magicPin popup:", e);
 }
 
-// Replace closes tabs, so it's armed on first click and runs on the second.
+async function localPinnedTabs() {
+  const tabs = await browser.tabs.query({ pinned: true });
+  return tabs
+    .filter((t) => !t.incognito)
+    .map((t) => ({
+      tabId: t.id,
+      url: t.url,
+      title: t.title ?? "",
+      index: t.index,
+      windowId: t.windowId,
+      cookieStoreId: t.cookieStoreId,
+    }));
+}
+
+// Replace closes tabs, so it's armed on first click and runs on the second,
+// previewing its consequences ("Sure? +3 −2") while armed.
 let armedKey = null;
+let armedPreview = "";
 let busy = false;
 // Expanded/collapsed choices survive the frequent storage-driven re-renders.
 const openState = new Map();
@@ -127,11 +146,19 @@ function sourceSection({ key, record, isOwn, open }) {
   if (!isOwn) {
     const armed = armedKey === key;
     const replace = summaryButton(
-      armed ? "Sure? Closes tabs" : "Replace",
+      armed ? `Sure?${armedPreview || " Closes tabs"}` : "Replace",
       "Make this device's pinned tabs match this set (two clicks)",
-      () => {
+      async () => {
         if (armedKey !== key) {
           armedKey = key;
+          armedPreview = "";
+          try {
+            const plan = planReplace(await localPinnedTabs(), record.pins);
+            const adds = plan.sequence.filter((s) => s.create).length;
+            armedPreview = ` +${adds} −${plan.close.length}`;
+          } catch (e) {
+            logError(e);
+          }
           render().catch(logError);
           return;
         }
@@ -185,12 +212,9 @@ async function render() {
   // Don't rebuild the DOM out from under an in-progress device rename.
   if (document.activeElement?.classList?.contains("source-name")) return;
   const all = await browser.storage.sync.get(null);
-  const { paused, lastSync, deviceId: ownId, undo } = await browser.storage.local.get([
-    "paused",
-    "lastSync",
-    "deviceId",
-    "undo",
-  ]);
+  const { paused, lastSync, deviceId: ownId, undo, lastError } = await browser.storage.local.get(
+    ["paused", "lastSync", "deviceId", "undo", "lastError"]
+  );
 
   document.getElementById("pause").checked = Boolean(paused);
   document.getElementById("sync").disabled = busy || Boolean(paused);
@@ -243,6 +267,25 @@ async function render() {
   document.getElementById("status").textContent = lastSync
     ? `Last save: ${new Date(lastSync).toLocaleString()}`
     : "Nothing saved yet";
+
+  const errorLine = document.getElementById("error");
+  errorLine.hidden = !lastError;
+  if (lastError) {
+    errorLine.textContent = `⚠ ${lastError.message} (${relativeTime(lastError.at)})`;
+  }
+
+  renderQuota(all).catch(logError);
+}
+
+async function renderQuota(all) {
+  let bytes;
+  try {
+    bytes = await browser.storage.sync.getBytesInUse(null);
+  } catch {
+    bytes = new TextEncoder().encode(JSON.stringify(all)).length; // estimate
+  }
+  document.getElementById("quota").textContent =
+    `Sync storage: ${(bytes / 1024).toFixed(1)} / 100 KB`;
 }
 
 document.getElementById("pause").addEventListener("change", async (e) => {
@@ -268,6 +311,45 @@ document.getElementById("snapsave").addEventListener("click", async () => {
 });
 
 document.getElementById("undo").addEventListener("click", () => runAction({ type: "undo" }));
+
+document.getElementById("export").addEventListener("click", async () => {
+  try {
+    const all = await browser.storage.sync.get(null);
+    const pick = (prefix) =>
+      Object.fromEntries(
+        Object.keys(all)
+          .filter((k) => k.startsWith(prefix))
+          .map((k) => [k.slice(prefix.length), all[k]])
+      );
+    const data = buildExport({ devices: pick("device:"), snapshots: pick("snapshot:") }, Date.now());
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
+    a.download = `magicpin-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  } catch (e) {
+    logError(e);
+  }
+});
+
+document.getElementById("import").addEventListener("click", () => {
+  document.getElementById("importfile").click();
+});
+
+document.getElementById("importfile").addEventListener("change", async (e) => {
+  const file = e.target.files?.[0];
+  e.target.value = "";
+  if (!file) return;
+  try {
+    const sets = parseImport(await file.text());
+    await runAction({ type: "import", sets });
+  } catch (err) {
+    // Parse errors never reach the background; show them directly.
+    const errorLine = document.getElementById("error");
+    errorLine.hidden = false;
+    errorLine.textContent = `⚠ Import failed: ${err.message}`;
+  }
+});
 
 // Clicking anywhere that isn't a button disarms a pending Replace. (Button
 // clicks manage the armed state themselves; this handler runs after them in

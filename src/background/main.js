@@ -28,6 +28,19 @@ async function clearErrorBadge() {
   await browser.action.setBadgeText({ text: "" });
 }
 
+// Errors surface in two places: the toolbar badge (popup closed) and a
+// storage.local record the popup footer renders (badge is invisible while
+// the popup covers it).
+async function reportError(message) {
+  await browser.storage.local.set({ lastError: { message, at: Date.now() } });
+  await setErrorBadge();
+}
+
+async function clearError() {
+  await browser.storage.local.remove("lastError");
+  await clearErrorBadge();
+}
+
 // All storage-mutating work runs on one promise chain, so the export and
 // replace paths never interleave.
 let chain = Promise.resolve();
@@ -54,10 +67,10 @@ async function exportNow({ force = false } = {}) {
     if (current && current.name === deviceName && pinsEqual(current.pins, pins)) return;
     await store.writeDevice(deviceId, { name: deviceName, updatedAt: Date.now(), pins });
     await store.writeLastSync(Date.now());
-    await clearErrorBadge();
+    await clearError();
   } catch (e) {
     console.error("magicPin: export failed", e);
-    await setErrorBadge();
+    await reportError(`Saving failed: ${e.message}`);
   }
 }
 
@@ -88,12 +101,18 @@ async function adoptPins(key, makePlan) {
     if (!target) throw new Error(`unknown source ${key}`);
     const current = await getLocalPinnedTabs();
     const before = serializePins(current);
-    await applyReplace(makePlan(current, target));
+    const failed = await applyReplace(makePlan(current, target));
     await store.writeUndo({ pins: before, savedAt: Date.now() });
-    await clearErrorBadge();
+    if (failed) {
+      await reportError(
+        `${failed} pin(s) couldn't be opened here (privileged URL or missing container)`
+      );
+    } else {
+      await clearError();
+    }
   } catch (e) {
     console.error("magicPin: adopt failed", e);
-    await setErrorBadge();
+    await reportError(`Couldn't apply that set: ${e.message}`);
   }
   // The result is now this device's current set; save it right away. Forced:
   // this is an explicit user action, so the record must mirror the result
@@ -109,11 +128,15 @@ const mergeWith = serialize((key) => adoptPins(key, planMerge));
 const addPin = serialize(async (pin) => {
   try {
     if (!pin?.url) return;
-    await applyReplace(planMerge(await getLocalPinnedTabs(), [pin]));
-    await clearErrorBadge();
+    const failed = await applyReplace(planMerge(await getLocalPinnedTabs(), [pin]));
+    if (failed) {
+      await reportError("That pin couldn't be opened here (privileged URL or missing container)");
+    } else {
+      await clearError();
+    }
   } catch (e) {
     console.error("magicPin: add pin failed", e);
-    await setErrorBadge();
+    await reportError(`Couldn't pin that: ${e.message}`);
   }
   await exportNow({ force: true });
 });
@@ -134,10 +157,10 @@ const saveSnapshot = serialize(async (name) => {
       pins,
     });
     await store.writeLastSync(Date.now());
-    await clearErrorBadge();
+    await clearError();
   } catch (e) {
     console.error("magicPin: snapshot failed", e);
-    await setErrorBadge();
+    await reportError(`Snapshot failed: ${e.message}`);
   }
 });
 
@@ -146,7 +169,7 @@ const deleteSnapshot = serialize(async (snapshotId) => {
     await store.removeSnapshot(snapshotId);
   } catch (e) {
     console.error("magicPin: delete snapshot failed", e);
-    await setErrorBadge();
+    await reportError(`Delete failed: ${e.message}`);
   }
 });
 
@@ -160,7 +183,7 @@ const renameDevice = serialize(async (name) => {
     await exportNow({ force: true });
   } catch (e) {
     console.error("magicPin: rename failed", e);
-    await setErrorBadge();
+    await reportError(`Rename failed: ${e.message}`);
   }
 });
 
@@ -171,7 +194,45 @@ const forgetDevice = serialize(async (deviceId) => {
     await store.removeDevice(deviceId);
   } catch (e) {
     console.error("magicPin: forget failed", e);
-    await setErrorBadge();
+    await reportError(`Forget failed: ${e.message}`);
+  }
+});
+
+// ---------- backup import ----------
+// Sets arrive pre-validated by the popup's parseImport; re-check the shape
+// anyway and recreate everything as snapshots (non-destructive).
+
+const importSets = serialize(async (sets) => {
+  try {
+    await store.ensureSchema();
+    if (!Array.isArray(sets) || !sets.length || sets.length > 20) {
+      throw new Error("bad import payload");
+    }
+    const now = Date.now();
+    for (const set of sets) {
+      if (typeof set?.name !== "string" || !Array.isArray(set.pins)) {
+        throw new Error("bad import payload");
+      }
+      const pins = set.pins
+        .filter((p) => p && typeof p.url === "string" && p.url)
+        .map((p) => ({
+          url: p.url.slice(0, 2000),
+          title: typeof p.title === "string" ? p.title.slice(0, 300) : "",
+          ...(typeof p.cookieStoreId === "string" && p.cookieStoreId !== "firefox-default"
+            ? { cookieStoreId: p.cookieStoreId }
+            : {}),
+        }));
+      await store.writeSnapshot(crypto.randomUUID(), {
+        name: set.name.trim().slice(0, 40),
+        updatedAt: now,
+        pins,
+      });
+    }
+    await store.writeLastSync(now);
+    await clearError();
+  } catch (e) {
+    console.error("magicPin: import failed", e);
+    await reportError(`Import failed: ${e.message}`);
   }
 });
 
@@ -211,6 +272,7 @@ browser.runtime.onMessage.addListener((msg) => {
   if (msg?.type === "undo") return replaceWith("undo");
   if (msg?.type === "addPin") return addPin(msg.pin);
   if (msg?.type === "snapshot") return saveSnapshot(msg.name);
+  if (msg?.type === "import") return importSets(msg.sets);
   if (msg?.type === "deleteSnapshot") return deleteSnapshot(msg.id);
   if (msg?.type === "rename") return renameDevice(msg.name);
   if (msg?.type === "forget") return forgetDevice(msg.deviceId);

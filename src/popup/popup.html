@@ -22,8 +22,21 @@
       </div>
       <button id="undo" hidden></button>
       <button id="sync">Sync now</button>
+      <div class="iorow">
+        <button id="export" title="Download all sets and snapshots as a JSON backup">
+          Export backup
+        </button>
+        <button id="import" title="Import a backup file — its sets become snapshots">
+          Import backup
+        </button>
+        <input id="importfile" type="file" accept=".json,application/json" hidden />
+      </div>
     </div>
-    <footer id="status"></footer>
+    <footer>
+      <div id="error" hidden></div>
+      <div id="status"></div>
+      <div id="quota"></div>
+    </footer>
     <script src="popup.js" type="module"></script>
   </body>
 </html>

@@ -227,3 +227,29 @@ footer {
   border-top: 1px solid var(--border);
   color: var(--text-dim);
 }
+.iorow {
+  display: flex;
+  gap: 6px;
+}
+.iorow button {
+  flex: 1;
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--bg-raised);
+  color: var(--text);
+  cursor: pointer;
+}
+.iorow button:hover {
+  background: var(--bg-hover);
+}
+#error {
+  color: var(--danger);
+  padding-bottom: 4px;
+}
+#quota {
+  font-size: 11px;
+  padding-top: 2px;
+}

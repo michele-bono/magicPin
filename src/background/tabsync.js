@@ -19,10 +19,11 @@ export function isEcho(tabId) {
 // Makes local pinned tabs match a planReplace() plan: create, close, reorder.
 // Creates run BEFORE closes: if the only window held only to-be-closed pinned
 // tabs, closing first would close the window (or quit the browser) and abort
-// the replace half-way.
+// the replace half-way. Returns the number of pins that couldn't be opened.
 export async function applyReplace(plan) {
   const windowId = await getTargetWindowId();
   const finalIds = [];
+  let failed = 0;
   for (const step of plan.sequence) {
     if (step.tabId !== undefined) {
       finalIds.push(step.tabId);
@@ -30,6 +31,7 @@ export async function applyReplace(plan) {
     }
     if (windowId === null) {
       console.warn("magicPin: no normal window available; skipping", step.create.url);
+      failed++;
       continue;
     }
     try {
@@ -42,6 +44,7 @@ export async function applyReplace(plan) {
       // Privileged URLs (about:, file:) and containers that don't exist on
       // this device can't be created; skip rather than guess.
       console.warn("magicPin: could not create pinned tab for", step.create.url, e);
+      failed++;
     }
   }
 
@@ -55,6 +58,7 @@ export async function applyReplace(plan) {
   }
 
   await reorderTo(finalIds);
+  return failed;
 }
 
 async function createPinnedTab(windowId, { url, title, cookieStoreId }) {
