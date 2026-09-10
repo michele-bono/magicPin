@@ -1,6 +1,6 @@
 import { serializePins, pinsEqual, planReplace, planMerge } from "./pins.js";
-import { buildExport } from "./portable.js";
-import { applyReplace, isEcho } from "./tabsync.js";
+import { buildExport, validateImportSets } from "./portable.js";
+import { applyReplace } from "./tabsync.js";
 import * as store from "./store.js";
 import { debounce } from "./util.js";
 
@@ -32,14 +32,16 @@ async function clearErrorBadge() {
 // Errors surface in two places: the toolbar badge (popup closed) and a
 // storage.local record the popup footer renders (badge is invisible while
 // the popup covers it).
-async function reportError(message) {
-  await browser.storage.local.set({ lastError: { message, at: Date.now() } });
+async function reportError(message, key = "lastError") {
+  await browser.storage.local.set({ [key]: { message, at: Date.now() } });
   await setErrorBadge();
 }
 
-async function clearError() {
-  await browser.storage.local.remove("lastError");
-  await clearErrorBadge();
+async function clearError(key = "lastError") {
+  await browser.storage.local.remove(key);
+  const { lastError, lastSaveError } = await browser.storage.local.get(["lastError", "lastSaveError"]);
+  if (lastError || lastSaveError) await setErrorBadge();
+  else await clearErrorBadge();
 }
 
 // All storage-mutating work runs on one promise chain, so the export and
@@ -54,24 +56,37 @@ function serialize(fn) {
 }
 
 // ---------- export: save THIS device's pinned tabs to its own record ----------
-// One writer per device record means no cross-device merging, ever. Nothing
-// in this extension mutates tabs except the explicit replace below.
+// One writer per device record means no cross-device merging. Only explicit
+// restore, merge, undo, and add actions mutate tabs.
 
-async function exportNow({ force = false } = {}) {
+async function exportNow({ force = false, allowEmpty = false } = {}) {
   try {
     if (!force && (await store.readPaused())) return;
     await store.ensureSchema();
     const pins = serializePins(await getLocalPinnedTabs());
-    const { deviceId, deviceName } = await store.getDeviceIdentity(pins);
+    const { deviceId, deviceName } = await store.getDeviceIdentity();
     const current = (await store.readDevices())[deviceId];
+    // Session loss/startup can temporarily report no pins. Never erase the
+    // last saved set automatically; explicit Sync now can save an empty set.
+    if (!allowEmpty && !pins.length && current?.pins?.length) {
+      await browser.storage.local.set({ emptyPinsPreserved: true });
+      if (current.name !== deviceName) {
+        await store.writeDevice(deviceId, { ...current, name: deviceName });
+      }
+      return;
+    }
+    await browser.storage.local.remove("emptyPinsPreserved");
     // Identity-sequence comparison: title-only churn doesn't burn sync quota.
-    if (current && current.name === deviceName && pinsEqual(current.pins, pins)) return;
+    if (current && current.name === deviceName && pinsEqual(current.pins, pins)) {
+      await clearError("lastSaveError");
+      return;
+    }
     await store.writeDevice(deviceId, { name: deviceName, updatedAt: Date.now(), pins });
     await store.writeLastSync(Date.now());
-    await clearError();
+    await clearError("lastSaveError");
   } catch (e) {
     console.error("magicPin: export failed", e);
-    await reportError(`Saving failed: ${e.message}`);
+    await reportError(`Saving failed: ${e.message}`, "lastSaveError");
   }
 }
 
@@ -90,25 +105,30 @@ async function resolvePins(key) {
   return undefined;
 }
 
-// Shared by replace and merge. The pre-mutation state goes into the undo slot
-// only AFTER the apply succeeds — if the apply throws, the slot keeps its old
-// content, so a failed undo can be retried instead of destroying its target.
-// Since resolvePins("undo") reads before the slot is rewritten, the undo
-// action itself toggles between the two states (undo/redo).
+// A durable recovery checkpoint precedes every mutation. Keep the old undo
+// separately until success, and retain the checkpoint after partial failure.
+// Successful undo still toggles between the two states (undo/redo).
 async function adoptPins(key, makePlan) {
+  let allowEmpty = false;
   try {
     await store.ensureSchema();
     const target = await resolvePins(key);
     if (!target) throw new Error(`unknown source ${key}`);
     const current = await getLocalPinnedTabs();
     const before = serializePins(current);
-    const failed = await applyReplace(makePlan(current, target));
-    await store.writeUndo({ pins: before, savedAt: Date.now() });
+    const plan = makePlan(current, target);
+    const checkpoint = { pins: before, savedAt: Date.now() };
+    const { recovery } = await browser.storage.local.get("recovery");
+    // Retrying recovery must not destroy the state we're trying to recover.
+    if (key !== "undo" || !recovery) await store.writeRecovery(checkpoint);
+    const failed = await applyReplace(plan);
     if (failed) {
       await reportError(
         `${failed} pin(s) couldn't be opened here (privileged URL or missing container)`
       );
     } else {
+      await store.writeUndo(checkpoint);
+      allowEmpty = target.length === 0;
       await clearError();
     }
   } catch (e) {
@@ -118,7 +138,7 @@ async function adoptPins(key, makePlan) {
   // The result is now this device's current set; save it right away. Forced:
   // this is an explicit user action, so the record must mirror the result
   // even while auto-saving is paused.
-  await exportNow({ force: true });
+  await exportNow({ force: true, allowEmpty });
 }
 
 const replaceWith = serialize((key) => adoptPins(key, planReplace));
@@ -208,30 +228,13 @@ const forgetDevice = serialize(async (deviceId) => {
 const importSets = serialize(async (sets) => {
   try {
     await store.ensureSchema();
-    if (!Array.isArray(sets) || !sets.length || sets.length > 20) {
-      throw new Error("bad import payload");
-    }
+    const validated = validateImportSets(sets);
+    if (!validated.length) return;
     const now = Date.now();
-    for (const set of sets) {
-      if (typeof set?.name !== "string" || !Array.isArray(set.pins)) {
-        throw new Error("bad import payload");
-      }
-      const pins = set.pins
-        .filter((p) => p && typeof p.url === "string" && p.url)
-        .slice(0, 200)
-        .map((p) => ({
-          url: p.url.slice(0, 2000),
-          title: typeof p.title === "string" ? p.title.slice(0, 300) : "",
-          ...(typeof p.cookieStoreId === "string" && p.cookieStoreId !== "firefox-default"
-            ? { cookieStoreId: p.cookieStoreId }
-            : {}),
-        }));
-      await store.writeSnapshot(crypto.randomUUID(), {
-        name: set.name.trim().slice(0, 40),
-        updatedAt: now,
-        pins,
-      });
-    }
+    const records = Object.fromEntries(validated.map(({ name, pins }) => [
+      `snapshot:${crypto.randomUUID()}`, { name, updatedAt: now, pins },
+    ]));
+    await browser.storage.sync.set(records);
     await store.writeLastSync(now);
     await clearError();
   } catch (e) {
@@ -270,7 +273,7 @@ const exportBackup = serialize(async () => {
 
 browser.tabs.onUpdated.addListener(
   (tabId, changeInfo, tab) => {
-    if (isEcho(tabId) || tab.incognito) return;
+    if (tab.incognito) return;
     if (changeInfo.pinned !== undefined) scheduleExport();
     else if (changeInfo.url && tab.pinned) scheduleNavExport();
   },
@@ -279,24 +282,23 @@ browser.tabs.onUpdated.addListener(
 
 browser.tabs.onRemoved.addListener((tabId, removeInfo) => {
   // A closing window (or browser shutdown) is NOT an edit to the pin set.
-  if (isEcho(tabId) || removeInfo.isWindowClosing) return;
+  if (removeInfo.isWindowClosing) return;
   scheduleExport(); // no-ops via pinsEqual if the tab wasn't pinned
 });
 
-browser.tabs.onMoved.addListener((tabId) => {
-  if (isEcho(tabId)) return;
+browser.tabs.onMoved.addListener(() => {
   scheduleExport();
 });
 
 // Cross-window drags fire onAttached, not onMoved.
-browser.tabs.onAttached.addListener((tabId) => {
-  if (isEcho(tabId)) return;
+browser.tabs.onAttached.addListener(() => {
   scheduleExport();
 });
 
 browser.runtime.onMessage.addListener((msg) => {
   // Returning the promise makes the popup's sendMessage resolve on completion.
-  if (msg?.type === "sync" || msg?.type === "unpause") return exportPins();
+  if (msg?.type === "sync") return exportPins({ force: true, allowEmpty: true });
+  if (msg?.type === "unpause") return exportPins();
   if (msg?.type === "replace") return replaceWith(msg.key);
   if (msg?.type === "merge") return mergeWith(msg.key);
   if (msg?.type === "undo") return replaceWith("undo");

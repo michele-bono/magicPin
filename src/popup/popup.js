@@ -160,10 +160,13 @@ function sourceSection({ key, record, isOwn, open, index = 0 }) {
     : `${record.pins.length} · ${relativeTime(record.updatedAt)}`;
   summary.append(meta);
 
-  if (!isOwn) {
+  {
     const armed = armedKey === key;
+    const replaceLabel = armed
+      ? `Sure?${armedPreview || " Closes tabs"}`
+      : (isOwn ? "Restore" : "Replace");
     const replace = summaryButton(
-      armed ? `Sure?${armedPreview || " Closes tabs"}` : "Replace",
+      replaceLabel,
       "Make this device's pinned tabs match this set (two clicks)",
       async () => {
         if (armedKey !== key) {
@@ -192,21 +195,23 @@ function sourceSection({ key, record, isOwn, open, index = 0 }) {
       )
     );
 
-    const isSnapshot = key.startsWith("snapshot:");
-    const remove = summaryButton(
-      "✕",
-      isSnapshot ? "Delete this snapshot" : "Forget this device's saved pins",
-      () => {
-        armedKey = null;
-        send(
-          isSnapshot
-            ? { type: "deleteSnapshot", id: key.slice(9) }
-            : { type: "forget", deviceId: key.slice(7) }
-        ).catch(logError);
-      }
-    );
-    remove.classList.add("remove");
-    summary.append(remove);
+    if (!isOwn) {
+      const isSnapshot = key.startsWith("snapshot:");
+      const remove = summaryButton(
+        "✕",
+        isSnapshot ? "Delete this snapshot" : "Forget this device's saved pins",
+        () => {
+          armedKey = null;
+          send(
+            isSnapshot
+              ? { type: "deleteSnapshot", id: key.slice(9) }
+              : { type: "forget", deviceId: key.slice(7) }
+          ).catch(logError);
+        }
+      );
+      remove.classList.add("remove");
+      summary.append(remove);
+    }
   }
 
   details.append(summary, pinList(record.pins));
@@ -229,8 +234,8 @@ async function render() {
   // Don't rebuild the DOM out from under an in-progress device rename.
   if (document.activeElement?.classList?.contains("source-name")) return;
   const all = await browser.storage.sync.get(null);
-  const { paused, lastSync, deviceId: ownId, undo, lastError } = await browser.storage.local.get(
-    ["paused", "lastSync", "deviceId", "undo", "lastError"]
+  const { paused, lastSync, deviceId: ownId, undo, recovery, lastError, lastSaveError, emptyPinsPreserved } = await browser.storage.local.get(
+    ["paused", "lastSync", "deviceId", "undo", "recovery", "lastError", "lastSaveError", "emptyPinsPreserved"]
   );
 
   document.getElementById("pause").checked = Boolean(paused);
@@ -238,9 +243,12 @@ async function render() {
   document.getElementById("snapsave").disabled = busy;
 
   const undoButton = document.getElementById("undo");
-  undoButton.hidden = !undo;
-  if (undo) {
-    undoButton.textContent = `Undo last replace (${relativeTime(undo.savedAt)})`;
+  const undoTarget = recovery ?? undo;
+  undoButton.hidden = !undoTarget;
+  if (undoTarget) {
+    undoButton.textContent = recovery
+      ? "Recover pins from interrupted action"
+      : `Undo last action (${relativeTime(undoTarget.savedAt)})`;
     undoButton.disabled = busy;
   }
 
@@ -282,19 +290,19 @@ async function render() {
     }
   }
 
-  document.getElementById("status").textContent = lastSync
-    ? `Last save: ${new Date(lastSync).toLocaleString()}`
-    : "Nothing saved yet";
+  document.getElementById("status").textContent = emptyPinsPreserved
+    ? "No pinned tabs found. Saved pins kept — use Restore, or Sync now to save an empty set."
+    : (lastSync ? `Last save: ${new Date(lastSync).toLocaleString()}` : "Nothing saved yet");
 
   const errorLine = document.getElementById("error");
   if (parseError) {
     errorLine.hidden = false;
     errorLine.textContent = `⚠ ${parseError}`;
   } else {
-    errorLine.hidden = !lastError;
-    if (lastError) {
-      errorLine.textContent = `⚠ ${lastError.message} (${relativeTime(lastError.at)})`;
-    }
+    const errors = [lastError, lastSaveError].filter(Boolean);
+    errorLine.hidden = !errors.length;
+    errorLine.textContent = errors
+      .map((error) => `⚠ ${error.message} (${relativeTime(error.at)})`).join("; ");
   }
 
   renderQuota(all).catch(logError);
@@ -374,8 +382,8 @@ document.addEventListener("click", (e) => {
   }
 });
 
-// Re-render while open so incoming syncs stay current. Bursts (an import
-// writing 20 snapshots) coalesce into one paint per frame.
+// Re-render while open so incoming syncs stay current. Bursts of storage
+// changes coalesce into one paint per frame.
 let renderQueued = false;
 function scheduleRender() {
   if (renderQueued) return;

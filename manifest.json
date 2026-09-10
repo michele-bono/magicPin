@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "magicPin",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Save each device's pinned tabs to your Firefox Account and restore any device's set with one click.",
   "permissions": [
     "tabs",
@@ -29,9 +29,6 @@
           "none"
         ]
       }
-    },
-    "gecko_android": {
-      "strict_min_version": "142.0"
     }
   },
   "commands": {

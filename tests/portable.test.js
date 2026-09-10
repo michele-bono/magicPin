@@ -36,10 +36,10 @@ describe("buildExport / parseImport roundtrip", () => {
 });
 
 describe("parseImport rejection", () => {
-  it("rejects junk, wrong format, and empty files with readable messages", () => {
+  it("rejects junk, wrong format, and missing sets with readable messages", () => {
     expect(() => parseImport("{nope")).toThrow(/JSON/);
     expect(() => parseImport('{"foo":1}')).toThrow(/magicPin/);
-    expect(() => parseImport('{"magicPin":1,"sets":[]}')).toThrow(/no sets/);
+    expect(() => parseImport('{"magicPin":1}')).toThrow(/set list/);
   });
 
   it("rejects malformed sets and pins", () => {
@@ -49,7 +49,7 @@ describe("parseImport rejection", () => {
     ).toThrow(/url/);
   });
 
-  it("trims and caps names, strips default containers and junk fields", () => {
+  it("preserves names, strips default containers and junk fields", () => {
     const text = JSON.stringify({
       magicPin: 1,
       sets: [
@@ -62,7 +62,7 @@ describe("parseImport rejection", () => {
       ],
     });
     const [set] = parseImport(text);
-    expect(set.name).toHaveLength(40);
+    expect(set.name).toBe(`  ${"x".repeat(60)}  `);
     expect(set.pins).toEqual([{ url: "https://a.test/", title: "" }]);
   });
 });
@@ -74,6 +74,8 @@ describe("buildExport robustness", () => {
       noPins: { name: "Broken", updatedAt: 1 },
       nullRec: null,
       badPin: { name: "BadPin", updatedAt: 1, pins: [null] },
+      blankName: { name: " ", pins: [] },
+      emptyURL: { name: "EmptyURL", pins: [pin("")] },
     };
     const out = buildExport({ devices }, 1);
     expect(out.sets.map((s) => s.name)).toEqual(["OK"]);

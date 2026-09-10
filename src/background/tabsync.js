@@ -1,20 +1,5 @@
-// Applies a replace plan via the tabs API. Every mutation we perform is
-// marked so the event listeners in main.js can ignore the resulting echoes.
-
-const ECHO_MS = 3000;
-const inFlight = new Map(); // tabId -> timeout id
-
-export function markEcho(tabId) {
-  clearTimeout(inFlight.get(tabId));
-  inFlight.set(
-    tabId,
-    setTimeout(() => inFlight.delete(tabId), ECHO_MS)
-  );
-}
-
-export function isEcho(tabId) {
-  return inFlight.has(tabId);
-}
+// Applies a replace plan via the tabs API. Resulting events queue a save
+// behind the mutation; identity comparison makes unchanged saves no-ops.
 
 // Makes local pinned tabs match a planReplace() plan: create, close, reorder.
 // Creates run BEFORE closes: if the only window held only to-be-closed pinned
@@ -36,9 +21,6 @@ export async function applyReplace(plan) {
     }
     try {
       const tab = await createPinnedTab(windowId, step.create);
-      // markEcho lands after the create resolves, so the new tab's very first
-      // events can slip through — harmless: they only queue a no-op export.
-      markEcho(tab.id);
       finalIds.push(tab.id);
     } catch (e) {
       // Privileged URLs (about:, file:) and containers that don't exist on
@@ -49,7 +31,6 @@ export async function applyReplace(plan) {
   }
 
   for (const tabId of plan.close) {
-    markEcho(tabId);
     try {
       await browser.tabs.remove(tabId);
     } catch {
@@ -83,8 +64,7 @@ async function getTargetWindowId() {
 }
 
 // Reorder pinned tabs to the desired global sequence, per window: kept tabs
-// stay in their windows, and only tabs actually out of place are moved (and
-// echo-marked) — blanket marking would swallow real user events for 3s.
+// stay in their windows, and only tabs actually out of place are moved.
 async function reorderTo(orderedTabIds) {
   const tabs = await browser.tabs.query({ pinned: true });
   const eligible = tabs.filter((t) => !t.incognito);
@@ -105,9 +85,6 @@ async function reorderTo(orderedTabIds) {
       .map((t) => t.id);
     for (let i = 0; i < desired.length; i++) {
       if (current[i] === desired[i]) continue; // already in place
-      // markEcho BEFORE the call: our own onMoved event may dispatch before
-      // the promise continuation runs.
-      markEcho(desired[i]);
       try {
         await browser.tabs.move(desired[i], { windowId, index: i });
       } catch {

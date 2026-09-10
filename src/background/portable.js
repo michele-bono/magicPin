@@ -4,17 +4,11 @@
 
 export const FORMAT_VERSION = 1;
 
-const MAX_SETS = 20;
-const MAX_PINS = 200;
-const MAX_NAME = 40;
-const MAX_URL = 2000;
-const MAX_TITLE = 300;
-
 // Malformed records (e.g. written by a future schema) are skipped: a backup
 // this function produces must always be re-importable.
 const exportable = ([, r]) =>
-  r && typeof r.name === "string" && Array.isArray(r.pins) &&
-  r.pins.every((p) => p && typeof p.url === "string");
+  r && typeof r.name === "string" && r.name.trim() && Array.isArray(r.pins) &&
+  r.pins.every((p) => p && typeof p.url === "string" && p.url);
 
 export function buildExport({ devices = {}, snapshots = {} } = {}, exportedAt) {
   const toSet = (kind) => ([, record]) => ({
@@ -46,28 +40,32 @@ export function parseImport(text) {
   if (data?.magicPin !== FORMAT_VERSION) {
     throw new Error("not a magicPin export (or a newer format)");
   }
-  if (!Array.isArray(data.sets) || !data.sets.length) throw new Error("no sets in file");
-  if (data.sets.length > MAX_SETS) throw new Error(`too many sets (max ${MAX_SETS})`);
+  return validateImportSets(data.sets);
+}
 
-  return data.sets.map((set, i) => {
+// Shared with the background handler. Preserve backup data; Firefox enforces
+// storage quotas when the complete batch of snapshots is written.
+export function validateImportSets(sets) {
+  if (!Array.isArray(sets)) throw new Error("missing set list");
+  return sets.map((set, i) => {
     if (typeof set?.name !== "string" || !set.name.trim()) {
       throw new Error(`set ${i + 1}: missing name`);
     }
-    if (!Array.isArray(set.pins) || set.pins.length > MAX_PINS) {
-      throw new Error(`set "${set.name.slice(0, MAX_NAME)}": bad pin list`);
+    if (!Array.isArray(set.pins)) {
+      throw new Error(`set ${i + 1}: bad pin list`);
     }
     const pins = set.pins.map((p, j) => {
-      if (typeof p?.url !== "string" || !p.url || p.url.length > MAX_URL) {
-        throw new Error(`set "${set.name.slice(0, MAX_NAME)}", pin ${j + 1}: bad url`);
+      if (typeof p?.url !== "string" || !p.url) {
+        throw new Error(`set ${i + 1}, pin ${j + 1}: bad url`);
       }
       return {
         url: p.url,
-        title: typeof p.title === "string" ? p.title.slice(0, MAX_TITLE) : "",
+        title: typeof p.title === "string" ? p.title : "",
         ...(typeof p.cookieStoreId === "string" && p.cookieStoreId !== "firefox-default"
           ? { cookieStoreId: p.cookieStoreId }
           : {}),
       };
     });
-    return { name: set.name.trim().slice(0, MAX_NAME), pins };
+    return { name: set.name, pins };
   });
 }

@@ -1,5 +1,3 @@
-import { pinsEqual } from "./pins.js";
-
 const DEVICE_PREFIX = "device:";
 // v3 = per-device pin sets (device:<id> records). v1/v2 used a merged global
 // set under pin:<uuid> keys; those are removed by the one-time migration and
@@ -38,26 +36,11 @@ export async function removeDevice(deviceId) {
 }
 
 // This device's stable id and user-editable name (storage.local: per device).
-// Reinstalls (and temporary-add-on updates) wipe storage.local; before minting
-// a new identity, adopt the UNIQUE synced record whose pin set matches the
-// live tabs — same machine, same pins — so the device keeps its name instead
-// of leaving a ghost record behind. Ambiguous matches (two devices with
-// identical sets) mint a fresh identity rather than risk hijacking another
-// device's record.
-export async function getDeviceIdentity(currentPins) {
+// Matching pins are not proof of identity: different machines often share
+// the same set. After local storage loss, always create a new device record.
+export async function getDeviceIdentity() {
   let { deviceId, deviceName } = await browser.storage.local.get(["deviceId", "deviceName"]);
   if (deviceId) return { deviceId, deviceName };
-
-  if (currentPins?.length) {
-    const matches = Object.entries(await readDevices()).filter(([, record]) =>
-      pinsEqual(record.pins, currentPins)
-    );
-    if (matches.length === 1) {
-      [deviceId, { name: deviceName }] = matches[0];
-      await browser.storage.local.set({ deviceId, deviceName });
-      return { deviceId, deviceName };
-    }
-  }
 
   deviceId = crypto.randomUUID();
   const platform = await browser.runtime.getPlatformInfo().catch(() => ({ os: "device" }));
@@ -104,10 +87,15 @@ export async function removeSnapshot(snapshotId) {
 // the last replace/merge. Restoring writes the pre-restore state back into the
 // slot, so the button toggles between the two states (undo/redo).
 export async function readUndo() {
-  const { undo } = await browser.storage.local.get("undo");
-  return undo;
+  const { undo, recovery } = await browser.storage.local.get(["undo", "recovery"]);
+  return recovery ?? undo;
 }
 
 export async function writeUndo(undo) {
-  await browser.storage.local.set({ undo });
+  await browser.storage.local.set({ undo, recovery: null });
+}
+
+// Persist before changing tabs, without overwriting the previous undo target.
+export async function writeRecovery(recovery) {
+  await browser.storage.local.set({ recovery });
 }

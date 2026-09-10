@@ -2,22 +2,25 @@
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-2b2a33)](LICENSE)
 [![Firefox 140+](https://img.shields.io/badge/Firefox-140%2B-ff5c4d)](https://www.mozilla.org/firefox/)
-[![Tests](https://img.shields.io/badge/tests-34%20passing-2da44e)](tests/)
+[![Tests](https://img.shields.io/badge/tests-55%20passing-2da44e)](tests/)
 
 Firefox extension that keeps a saved copy of **each device's pinned tabs** in
 your Firefox Account, and lets you replace this device's pinned tabs with any
 other device's set in one click.
 
 Built on `browser.storage.sync`: no servers, no extra accounts, encrypted by
-Firefox Sync. Data travels on Firefox's sync schedule (typically within
-minutes; immediately on browser startup/focus in practice).
+Firefox Sync. Extension data normally syncs every 10 minutes, or when you
+select "Sync Now" in the Firefox account menu.
 
 ## Requirements
 
-- Firefox 140+ on every device
+- Desktop Firefox 140+ on every device (Windows, macOS, or Linux)
 - Signed into the same Firefox Account with Sync enabled (and "Add-ons"
-  syncing on, so the extension itself can be installed everywhere)
+  syncing on, which is required for extension data to sync)
 - magicPin installed on every device
+
+Firefox for Android is not supported: its `storage.sync` does not synchronize
+extension data with the user's account. See [Mozilla's storage.sync documentation](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/storage/sync).
 
 ## How it behaves
 
@@ -27,6 +30,11 @@ minutes; immediately on browser startup/focus in practice).
   changes by itself.
 - **One saved version per device.** The popup lists every device with its
   saved pins, names, and when it last saved.
+- **Protection when Firefox loses all pins.** An empty live tab list never
+  automatically erases a nonempty saved set, including during startup and
+  unpause. Use **Restore** on this device's row to bring its saved pins back,
+  or **Merge** to add missing pins. If you intentionally removed every pin,
+  click **Sync now** to save the empty set. The footer explains this choice.
 - **Replace from any device or snapshot.** Every other set has a **Replace**
   button (click twice — it closes tabs) that makes this device's pinned tabs
   match it: tabs that already match are kept (no reload), missing pins are
@@ -35,6 +43,10 @@ minutes; immediately on browser startup/focus in practice).
 - **Undo.** Replace and Merge first save what you had; the **Undo** button
   restores it (and pressing it again redoes — it toggles between the two
   states). Per device, survives popup closes, replaced on the next adopt.
+  A recovery checkpoint is saved before tabs change. If an action fails or
+  is interrupted, **Recover pins from interrupted action** restores that
+  checkpoint; the previous undo target remains stored separately until a
+  later action succeeds.
 - **Merge** adds a set's missing pins here without closing anything.
 - **Pin one thing:** the **+** next to any pin in any set pins just that one
   here (no-op if you already have it).
@@ -51,7 +63,7 @@ minutes; immediately on browser startup/focus in practice).
 - **Rename / forget:** click this device's name in the popup to rename it;
   forget (✕) removes a stale device's saved set.
 - **Pause** stops this device from saving (per-device). A red `!` badge means
-  the last save failed. Explicit actions (Replace/Merge/Undo/+) still save
+  a save or action failed. Explicit actions (Replace/Merge/Undo/+) still save
   their result while paused.
 - **Replace previews its consequences** while armed: "Sure? +3 −2" means 3
   pins open, 2 close.
@@ -59,6 +71,10 @@ minutes; immediately on browser startup/focus in practice).
   snapshot as a JSON file; "Import backup" restores a file's sets as
   snapshots (non-destructive). Your pins survive profile resets, Sync
   outages, and even Firefox itself.
+  Imports preserve full URLs, titles, and names and validate every set before
+  submitting one batch to storage. Firefox's per-record and total storage
+  quotas still apply; importing duplicates into an already-full profile can
+  fail. An empty backup imports as a no-op.
 - **Transparent status:** the popup footer shows the last save time, the last
   error (also signalled by the toolbar badge), and live sync-storage usage
   ("Sync storage: 12.3 / 100 KB").
@@ -69,11 +85,10 @@ minutes; immediately on browser startup/focus in practice).
 
 - If Firefox Sync is disabled, `storage.sync` silently stays local-only —
   Firefox offers no API to detect this.
-- Privileged pins (`about:*`, `file:*`) can't be recreated by extensions and
-  are skipped during Replace — and since device records and the undo slot
-  always mirror what's actually open, a skipped pin drops out of them. Pins
-  you care about are safest in a named snapshot: snapshots never change on
-  their own.
+- Privileged pins (such as `about:config` and `file:*`) can't be recreated by
+  extensions and are skipped during Replace. A warning remains visible even
+  if the resulting set saves successfully. Pins you care about are safest in
+  a named snapshot: snapshots never change on their own.
 - Each device set or snapshot must fit in one sync record (~8 KB ≈ 40+ pins
   depending on URL length), and everything shares Firefox Sync's ~100 KB
   total — roughly a dozen sets/snapshots.
@@ -82,13 +97,19 @@ minutes; immediately on browser startup/focus in practice).
   IDs, so on another device the pin may open in whichever container has that
   ID, or be skipped if none does.
 - Replace overwrites this device's own saved set with the adopted one (the
-  saved set always mirrors the device's current pinned tabs).
+  saved set mirrors current pins, except when an empty result is preserved
+  for recovery). An explicitly selected empty set is saved and can be undone.
+- The empty-session safeguard cannot distinguish partial session loss from
+  intentional edits to a nonempty set. Keep important sets in named snapshots.
+- Reinstalling or clearing local extension storage creates a new device
+  identity. Old saved device sets remain available to restore or forget;
+  matching pins never cause two devices to share an identity.
 
 ## Development
 
 ```bash
 npm install
-npm test        # vitest unit tests (pure pin-set logic)
+npm test        # unit tests and background workflow regression tests
 npm run lint    # web-ext lint
 npm start       # web-ext run (temporary profile)
 ```
@@ -122,6 +143,17 @@ waiting for the schedule. Then verify:
 8. **Merge and +:** in B, Merge from A's row → only A's missing pins are
    added, nothing closes; click + on a single pin → just that pin appears
    (in its container if it had one).
+9. **Lost pins:** save pins in A, then remove all live pins without clicking
+   Sync now. Wait for auto-save or restart Firefox without restoring tabs →
+   A's saved set remains. Click Restore twice on A's own row → pins return.
+   Intentionally remove them again and click Sync now → the saved set empties.
+10. **Failure recovery:** include an unavailable container in a snapshot and
+    Replace from it → the warning and recovery button remain visible after
+    auto-save. Recover → the previous live pins return.
+11. **Immediate edits:** right after a Replace, navigate or unpin one of two
+    restored pins → the saved set reflects the edit after its debounce.
+12. **Device isolation:** install in a new profile with the same pins as A →
+    it gets a separate device row; later edits leave A's record untouched.
 
 ## License
 
