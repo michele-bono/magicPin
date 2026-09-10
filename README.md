@@ -22,6 +22,13 @@ select "Sync Now" in the Firefox account menu.
 Firefox for Android is not supported: its `storage.sync` does not synchronize
 extension data with the user's account. See [Mozilla's storage.sync documentation](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/storage/sync).
 
+This is enforced by the manifest: `browser_specific_settings` deliberately
+omits `gecko_android`, which is what keeps the add-on off Firefox for Android
+on AMO. Adding it back — including as an empty `{}` — opts magicPin *into*
+Android distribution, where it cannot work. Don't add it to satisfy a linter
+warning about `data_collection_permissions`; the warning is moot once Android
+is not a target.
+
 ## How it behaves
 
 - **Each device saves its own set, automatically.** Pinning, unpinning,
@@ -43,9 +50,9 @@ extension data with the user's account. See [Mozilla's storage.sync documentatio
 - **Undo.** Replace and Merge first save what you had; the **Undo** button
   restores it (and pressing it again redoes — it toggles between the two
   states). Per device, survives popup closes, replaced on the next adopt.
-  A recovery checkpoint is saved before tabs change. If an action fails or
-  is interrupted, **Recover pins from interrupted action** restores that
-  checkpoint; the previous undo target remains stored separately until a
+  A recovery checkpoint is saved before Replace and Merge change tabs. If an
+  action fails or is interrupted, **Recover pins from interrupted action**
+  restores that checkpoint; the previous undo target remains stored until a
   later action succeeds.
 - **Merge** adds a set's missing pins here without closing anything.
 - **Pin one thing:** the **+** next to any pin in any set pins just that one
@@ -72,9 +79,10 @@ extension data with the user's account. See [Mozilla's storage.sync documentatio
   snapshots (non-destructive). Your pins survive profile resets, Sync
   outages, and even Firefox itself.
   Imports preserve full URLs, titles, and names and validate every set before
-  submitting one batch to storage. Firefox's per-record and total storage
-  quotas still apply; importing duplicates into an already-full profile can
-  fail. An empty backup imports as a no-op.
+  writing any of them, one record per set. Firefox's per-record and total
+  storage quotas still apply: a set too large to store is reported and
+  skipped, and the rest of the backup still imports. A backup with no sets
+  is reported as an error rather than importing silently.
 - **Transparent status:** the popup footer shows the last save time, the last
   error (also signalled by the toolbar badge), and live sync-storage usage
   ("Sync storage: 12.3 / 100 KB").

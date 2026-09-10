@@ -49,7 +49,7 @@ describe("parseImport rejection", () => {
     ).toThrow(/url/);
   });
 
-  it("preserves names, strips default containers and junk fields", () => {
+  it("trims names but keeps their length, strips default containers and junk fields", () => {
     const text = JSON.stringify({
       magicPin: 1,
       sets: [
@@ -62,7 +62,7 @@ describe("parseImport rejection", () => {
       ],
     });
     const [set] = parseImport(text);
-    expect(set.name).toBe(`  ${"x".repeat(60)}  `);
+    expect(set.name).toBe("x".repeat(60));
     expect(set.pins).toEqual([{ url: "https://a.test/", title: "" }]);
   });
 });

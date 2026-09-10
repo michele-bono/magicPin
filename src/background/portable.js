@@ -44,9 +44,10 @@ export function parseImport(text) {
 }
 
 // Shared with the background handler. Preserve backup data; Firefox enforces
-// storage quotas when the complete batch of snapshots is written.
+// storage quotas per record as each snapshot is written.
 export function validateImportSets(sets) {
   if (!Array.isArray(sets)) throw new Error("missing set list");
+  if (!sets.length) throw new Error("no sets in file");
   return sets.map((set, i) => {
     if (typeof set?.name !== "string" || !set.name.trim()) {
       throw new Error(`set ${i + 1}: missing name`);
@@ -66,6 +67,6 @@ export function validateImportSets(sets) {
           : {}),
       };
     });
-    return { name: set.name, pins };
+    return { name: set.name.trim(), pins };
   });
 }

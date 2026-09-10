@@ -61,9 +61,12 @@ function serialize(fn) {
 
 async function exportNow({ force = false, allowEmpty = false } = {}) {
   try {
+    const pins = serializePins(await getLocalPinnedTabs());
+    // Pins are back, so the "saved pins kept" notice no longer applies. Clear
+    // it before the pause check, which is otherwise where it would go stale.
+    if (pins.length) await browser.storage.local.remove("emptyPinsPreserved");
     if (!force && (await store.readPaused())) return;
     await store.ensureSchema();
-    const pins = serializePins(await getLocalPinnedTabs());
     const { deviceId, deviceName } = await store.getDeviceIdentity();
     const current = (await store.readDevices())[deviceId];
     // Session loss/startup can temporarily report no pins. Never erase the
@@ -119,8 +122,10 @@ async function adoptPins(key, makePlan) {
     const plan = makePlan(current, target);
     const checkpoint = { pins: before, savedAt: Date.now() };
     const { recovery } = await browser.storage.local.get("recovery");
-    // Retrying recovery must not destroy the state we're trying to recover.
-    if (key !== "undo" || !recovery) await store.writeRecovery(checkpoint);
+    // An undo needs no checkpoint: its target stays in the undo slot until the
+    // apply succeeds, so a failed undo can be retried. And a checkpoint still
+    // awaiting recovery outranks the state a later failed action would leave.
+    if (key !== "undo" && !recovery) await store.writeRecovery(checkpoint);
     const failed = await applyReplace(plan);
     if (failed) {
       await reportError(
@@ -128,7 +133,10 @@ async function adoptPins(key, makePlan) {
       );
     } else {
       await store.writeUndo(checkpoint);
-      allowEmpty = target.length === 0;
+      // Only an explicit replace from a stored record can mean "save nothing".
+      // planMerge never removes pins, and an undo/recovery target is a
+      // checkpoint of a possibly-empty live session, not an intended set.
+      allowEmpty = makePlan === planReplace && key !== "undo" && target.length === 0;
       await clearError();
     }
   } catch (e) {
@@ -229,14 +237,24 @@ const importSets = serialize(async (sets) => {
   try {
     await store.ensureSchema();
     const validated = validateImportSets(sets);
-    if (!validated.length) return;
     const now = Date.now();
-    const records = Object.fromEntries(validated.map(({ name, pins }) => [
-      `snapshot:${crypto.randomUUID()}`, { name, updatedAt: now, pins },
-    ]));
-    await browser.storage.sync.set(records);
+    // One record per set: a set that exceeds Firefox's per-item sync quota
+    // fails alone instead of rejecting the whole batch, so the rest still land.
+    let failed = 0;
+    for (const { name, pins } of validated) {
+      try {
+        await store.writeSnapshot(crypto.randomUUID(), { name, updatedAt: now, pins });
+      } catch (e) {
+        console.error("magicPin: import set failed", e);
+        failed++;
+      }
+    }
     await store.writeLastSync(now);
-    await clearError();
+    if (failed) {
+      await reportError(`${failed} set(s) were too large to store; the rest were imported`);
+    } else {
+      await clearError();
+    }
   } catch (e) {
     console.error("magicPin: import failed", e);
     await reportError(`Import failed: ${e.message}`);

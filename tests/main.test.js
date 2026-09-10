@@ -195,6 +195,55 @@ describe("missing Firefox pins", () => {
     expect(saved()).toEqual([oldPin]);
     expect(local().lastError).toBeDefined();
   });
+
+  it("keeps the saved pins when recovering from a restore that found no live tabs", async () => {
+    env.loseTabs();
+    browser.tabs.create.mockRejectedValue(new Error("Cannot create tabs"));
+    await send({ type: "replace", key: "device:local" });
+    expect(local().recovery.pins).toEqual([]);
+    browser.tabs.create.mockImplementation(async () => { throw new Error("still failing"); });
+    await send({ type: "undo" });
+    expect(saved()).toEqual([oldPin]);
+  });
+
+  it("never erases the saved pins when merging an empty set", async () => {
+    env.loseTabs();
+    browser.storage.sync._data["snapshot:target"].pins = [];
+    await send({ type: "merge", key: "snapshot:target" });
+    expect(saved()).toEqual([oldPin]);
+  });
+
+  it("keeps the undo target after a failed undo so it can be retried", async () => {
+    const create = browser.tabs.create.getMockImplementation();
+    await replace();
+    expect(local().undo.pins).toEqual([oldPin]);
+    browser.tabs.create.mockRejectedValue(new Error("Cannot create tabs"));
+    await send({ type: "undo" });
+    expect(local().lastError).toBeDefined();
+    browser.tabs.create.mockImplementation(create);
+    await send({ type: "undo" });
+    expect(saved()).toEqual([oldPin]);
+  });
+
+  it("keeps the oldest pending recovery checkpoint across a second failed action", async () => {
+    browser.tabs.create.mockRejectedValue(new Error("Cannot create tabs"));
+    await replace();
+    expect(local().recovery.pins).toEqual([oldPin]);
+    await send({ type: "replace", key: "snapshot:target" });
+    expect(local().recovery.pins).toEqual([oldPin]);
+  });
+
+  it("clears the preserved-pins notice once pins exist again, even while paused", async () => {
+    env.loseTabs();
+    await vi.advanceTimersByTimeAsync(3000);
+    browser.tabs.onRemoved.emit(99, { isWindowClosing: false });
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(local().emptyPinsPreserved).toBe(true);
+    await browser.storage.local.set({ paused: true });
+    await browser.tabs.create({ url: oldPin.url, pinned: true, windowId: 1 });
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(local().emptyPinsPreserved).toBeUndefined();
+  });
 });
 
 describe("backup import through the background", () => {
@@ -204,11 +253,36 @@ describe("backup import through the background", () => {
     sets[1].pins = Array.from({ length: 201 }, () => ({ url: "about:blank", title: "" }));
     const snapshots = Object.fromEntries(sets.map((set, i) => [i, set]));
     const parsed = parseImport(JSON.stringify(buildExport({ snapshots }, 1)));
-    const set = vi.spyOn(browser.storage.sync, "set");
     await send({ type: "import", sets: parsed });
     expect(local().lastError).toBeUndefined();
-    expect(set).toHaveBeenCalledTimes(1);
-    expect(Object.values(set.mock.calls[0][0]).map(({ name, pins }) => ({ name, pins }))).toEqual(sets);
+    expect(Object.entries(browser.storage.sync._data)
+      .filter(([key]) => key.startsWith("snapshot:") && key !== "snapshot:target")
+      .map(([, { name, pins }]) => ({ name, pins }))).toEqual(sets);
+  });
+
+  it("imports the remaining sets when one set exceeds the sync quota", async () => {
+    const good = { name: "Good", pins: [newPin] };
+    const huge = { name: "Huge", pins: [{ url: `https://x.test/?q=${"x".repeat(20000)}`, title: "" }] };
+    const realSet = browser.storage.sync.set.bind(browser.storage.sync);
+    vi.spyOn(browser.storage.sync, "set").mockImplementation(async (records) => {
+      if (JSON.stringify(records).length > 8192) throw new Error("QuotaExceededError");
+      return realSet(records);
+    });
+    await send({ type: "import", sets: [huge, good] });
+    const stored = Object.entries(browser.storage.sync._data)
+      .filter(([key]) => key.startsWith("snapshot:") && key !== "snapshot:target")
+      .map(([, { name }]) => name);
+    expect(stored).toContain("Good");
+    expect(stored).not.toContain("Huge");
+    expect(local().lastError.message).toMatch(/1 set/);
+  });
+
+  it("trims whitespace around imported set names", async () => {
+    await send({ type: "import", sets: [{ name: "  Work \n ", pins: [newPin] }] });
+    const names = Object.entries(browser.storage.sync._data)
+      .filter(([key]) => key.startsWith("snapshot:") && key !== "snapshot:target")
+      .map(([, { name }]) => name);
+    expect(names).toEqual(["Work"]);
   });
 
   it("validates the whole payload before writing any snapshots", async () => {
@@ -218,10 +292,9 @@ describe("backup import through the background", () => {
     expect(local().lastError.message).toContain("bad url");
   });
 
-  it("imports an empty export as a no-op", async () => {
-    const set = vi.spyOn(browser.storage.sync, "set");
-    await send({ type: "import", sets: parseImport(JSON.stringify(buildExport({}, 1))) });
-    expect(set).not.toHaveBeenCalled();
-    expect(local().lastError).toBeUndefined();
+  it("reports an empty backup instead of silently importing nothing", async () => {
+    expect(() => parseImport(JSON.stringify(buildExport({}, 1)))).toThrow(/no sets/);
+    await send({ type: "import", sets: [] });
+    expect(local().lastError.message).toMatch(/no sets/);
   });
 });

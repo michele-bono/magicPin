@@ -290,8 +290,12 @@ async function render() {
     }
   }
 
+  // Sync now is disabled while paused, so don't advertise it as the way out.
+  const emptyNotice = paused
+    ? "No pinned tabs found. Saved pins kept — use Restore, or resume syncing first."
+    : "No pinned tabs found. Saved pins kept — use Restore, or Sync now to save an empty set.";
   document.getElementById("status").textContent = emptyPinsPreserved
-    ? "No pinned tabs found. Saved pins kept — use Restore, or Sync now to save an empty set."
+    ? emptyNotice
     : (lastSync ? `Last save: ${new Date(lastSync).toLocaleString()}` : "Nothing saved yet");
 
   const errorLine = document.getElementById("error");
