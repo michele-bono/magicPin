@@ -14,7 +14,7 @@ select "Sync Now" in the Firefox account menu.
 
 ## Requirements
 
-- Desktop Firefox 140+ on every device (Windows, macOS, or Linux)
+- Desktop Firefox 142+ on every device (Windows, macOS, or Linux)
 - Signed into the same Firefox Account with Sync enabled (and "Add-ons"
   syncing on, which is required for extension data to sync)
 - magicPin installed on every device
@@ -25,9 +25,16 @@ extension data with the user's account. See [Mozilla's storage.sync documentatio
 This is enforced by the manifest: `browser_specific_settings` deliberately
 omits `gecko_android`, which is what keeps the add-on off Firefox for Android
 on AMO. Adding it back — including as an empty `{}` — opts magicPin *into*
-Android distribution, where it cannot work. Don't add it to satisfy a linter
-warning about `data_collection_permissions`; the warning is moot once Android
-is not a target.
+Android distribution, where it cannot work.
+
+`gecko.strict_min_version` is 142 for a related reason. `addons-linter`
+derives an Android version floor from `gecko.strict_min_version` whenever
+`gecko_android` is absent, and warns that `data_collection_permissions` is
+unsupported below Android 142 (`KEY_FIREFOX_ANDROID_UNSUPPORTED_BY_MIN_VERSION`).
+Setting the desktop floor to 142 clears that check without declaring Android
+support. Do not silence it by adding `gecko_android` instead — that trades a
+warning for a broken Android listing. The cost is that Firefox ESR 140 can no
+longer install magicPin.
 
 ## How it behaves
 
